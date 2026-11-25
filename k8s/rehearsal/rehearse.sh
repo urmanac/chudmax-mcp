@@ -34,22 +34,51 @@ CHAIN_WAIT=${REHEARSAL_CHAIN_WAIT:-240}   # seconds a commit may take to show up
 HERE=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$LOGS"
 : > "$SUMMARY"
+# Every line the script emits (stdout+stderr) lands in the logs artifact too —
+# GitHub job logs are sign-in-gated; the artifact is the diagnostic channel.
+exec > >(tee -a "$LOGS/script-output.log") 2>&1
 
 note() { echo "[rehearsal] $*" | tee -a "$SUMMARY" >&2; }
 receipt() { echo "RECEIPT: $*" | tee -a "$SUMMARY"; }
 fail() { echo "FAIL: $*" | tee -a "$SUMMARY" >&2; exit 1; }
 
+# CI-only diagnostics: GitHub job logs and step summaries are sign-in-gated,
+# but check-run ANNOTATIONS are readable via the public API — so the failure
+# path re-emits each log tail as a ::error annotation (a credential-less agent
+# can then diagnose the run without artifact-download access).
+annotate() { # $1 annotation title, $2 log file
+  local msg
+  [ -s "$2" ] || return 0
+  msg=$(tail -c 1400 "$2" | sed -e 's/%/%25/g' -e 's/\r//g' -e 's/]/%5D/g' -e 's/;/%3B/g' \
+    | awk '{printf "%s%%0A", $0}' | cut -c1-900)
+  printf '::error title=%s::%s\n' "$1" "$msg"
+}
+annotate_failure() {
+  [ "${CI:-}" = "true" ] || return 0
+  annotate rehearsal-output "$LOGS/script-output.log"
+  annotate gitserver "$LOGS/gitserver.log"
+  annotate pods-all "$LOGS/pods-all.txt"
+  annotate events "$LOGS/events.txt"
+  annotate chudmax-pod "$LOGS/pod.log"
+  annotate source-controller "$LOGS/source-controller.log"
+  annotate source-watcher "$LOGS/source-watcher.log"
+  sleep 1   # let the tee drain before the shell exits
+}
+
 cleanup() {
   rc=$?
   if [ -n "${GIT_SRV_PID:-}" ]; then kill "$GIT_SRV_PID" 2>/dev/null || true; fi
+  cp -f "$SUMMARY" "$LOGS/rehearsal-summary.txt" 2>/dev/null || true
   if [ "${rc}" -ne 0 ]; then
     note "failure path: exporting cluster logs to $LOGS"
-    kind export logs "$LOGS" 2>/dev/null || true
+    kind export logs --name "$CLUSTER" "$LOGS" 2>/dev/null || true
+    kubectl get pods -A -o wide > "$LOGS/pods-all.txt" 2>/dev/null || true
     kubectl -n "$NS" get events --sort-by=.lastTimestamp > "$LOGS/events.txt" 2>/dev/null || true
     kubectl -n "$NS" logs -l app.kubernetes.io/instance=$REL --all-containers > "$LOGS/pod.log" 2>/dev/null || true
     kubectl -n "$NS" logs alert-sink > "$LOGS/alert-sink.log" 2>/dev/null || true
     kubectl -n flux-system logs deploy/source-controller > "$LOGS/source-controller.log" 2>/dev/null || true
     kubectl -n flux-system logs deploy/source-watcher > "$LOGS/source-watcher.log" 2>/dev/null || true
+    annotate_failure
   fi
   kind delete cluster --name "$CLUSTER" 2>/dev/null || true
   note "throwaway cluster deleted (always)"
@@ -82,8 +111,16 @@ git ls-remote "http://127.0.0.1:$GIT_PORT/repo.git" >/dev/null \
 receipt "pre-flight git ls-remote OK over http://127.0.0.1:$GIT_PORT/repo.git"
 
 # ------------------------------------------------------------ cluster + stack
-note "creating the throwaway kind cluster ($PROVIDER provider)"
-kind create cluster --name "$CLUSTER" --config "$HERE/kind-config.yaml" --wait 240s
+note "creating the throwaway kind cluster ($PROVIDER provider, default CNI disabled)"
+# disableDefaultCNI (in the config) means the node stays NotReady until Cilium
+# is installed — a nonzero --wait would time out and fail the create. Wait for
+# the apiserver itself instead (kind writes the kubeconfig before returning).
+kind create cluster --name "$CLUSTER" --config "$HERE/kind-config.yaml" --wait 0s
+for _ in $(seq 1 60); do
+  kubectl get --raw=/readyz >/dev/null 2>&1 && break
+  sleep 2
+done
+kubectl get --raw=/readyz >/dev/null 2>&1 || fail "apiserver not ready 120s after kind create"
 GW=$("$BUILDER" network inspect kind -f '{{(index .IPAM.Config 0).Gateway}}')
 GIT_URL="http://${GW}:${GIT_PORT}/repo.git"
 receipt "runner gateway: $GW — the test repo URL the cluster will fetch: $GIT_URL"
