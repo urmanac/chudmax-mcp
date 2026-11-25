@@ -1,13 +1,16 @@
 # The phase-5 rehearsal's throwaway single-node kind cluster. The node image is
-# kind v0.33.0's default (pinned transitively by the kind binary pin — a
-# hand-written sha256 here would be a guess, not a receipt). Cilium replaces
-# the default CNI: kindnetd must stay out of the way (two CNIs fight over the
-# routes and Cilium's datapath breaks — the Cilium-on-kind recipe mandates
-# disableDefaultCNI). For the record, kindnet itself HAS enforced
+# pinned explicitly to the k8s version the OTHER pinned components support:
+# kind v0.33.0's DEFAULT node is kubernetes 1.37.0, but Cilium v1.18.1 and Flux
+# v2.10.1 are 1.34-era releases — three releases is outside their support
+# range. v1.34.11 (with its digest, straight from kind v0.33.0's official
+# release notes) is the newest kind-prebuilt node both are built for. For the
+# record, kindnet (the default CNI this pin replaces) HAS enforced
 # NetworkPolicies since kind v0.24 (the denial proof is not vacuous on it
 # either); CILIUM is installed for Cozystack parity and CiliumNetworkPolicy
 # coverage (the chart's auto mode resolves to the CNP on this cluster, and the
-# kube-apiserver reserved-entity rule is Cilium-only).
+# kube-apiserver reserved-entity rule is Cilium-only) — kindnetd is disabled
+# because two CNIs fight over the routes and Cilium's datapath breaks (the
+# Cilium-on-kind recipe mandates disableDefaultCNI).
 apiVersion: kind.x-k8s.io/v1alpha4
 kind: Cluster
 name: phase5-rehearsal
@@ -15,3 +18,4 @@ networking:
   disableDefaultCNI: true
 nodes:
   - role: control-plane
+    image: kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d

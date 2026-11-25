@@ -49,8 +49,8 @@ fail() { echo "FAIL: $*" | tee -a "$SUMMARY" >&2; exit 1; }
 annotate() { # $1 annotation title, $2 log file
   local msg
   [ -s "$2" ] || return 0
-  msg=$(tail -c 1400 "$2" | sed -e 's/%/%25/g' -e 's/\r//g' -e 's/]/%5D/g' -e 's/;/%3B/g' \
-    | awk '{printf "%s%%0A", $0}' | cut -c1-900)
+  msg=$(tail -c 900 "$2" | sed -e 's/%/%25/g' -e 's/\r//g' -e 's/]/%5D/g' -e 's/;/%3B/g' \
+    | awk '{printf "%s%%0A", $0}')
   printf '::error title=%s::%s\n' "$1" "$msg"
 }
 annotate_failure() {
@@ -121,12 +121,17 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 kubectl get --raw=/readyz >/dev/null 2>&1 || fail "apiserver not ready 120s after kind create"
-GW=$("$BUILDER" network inspect kind -f '{{(index .IPAM.Config 0).Gateway}}')
+# The kind network may be dual-stack with IPv6 FIRST in IPAM.Config (observed
+# on the docker-29 GitHub runners: gateway fc00:…::1) — the test-repo URL must
+# use the IPv4 gateway: an unbracketed v6 address is not a valid http URL for
+# git, and the pod path to the runner is the node's IPv4 route anyway.
+GW=$("$BUILDER" network inspect kind | jq -r '.[0].IPAM.Config[] | select(.Gateway != null) | select(.Gateway | test("^[0-9]+[.]")) | .Gateway' | head -n1)
+[ -n "$GW" ] || fail "no IPv4 gateway on the kind network (gateways seen: $("$BUILDER" network inspect kind -f '{{range .IPAM.Config}}{{.Gateway}} {{end}}'))"
 GIT_URL="http://${GW}:${GIT_PORT}/repo.git"
 receipt "runner gateway: $GW — the test repo URL the cluster will fetch: $GIT_URL"
 
-note "installing Cilium v1.18.1 (policy-cidr-match-mode=nodes)"
-cilium install --version v1.18.1 --set policyCIDRMatchMode=nodes --wait --wait-duration 8m
+note "installing Cilium v1.18.1 (the official kind recipe: ipam kubernetes; policy-cidr-match-mode=nodes)"
+cilium install --version v1.18.1 --set ipam.mode=kubernetes --set policyCIDRMatchMode=nodes --wait --wait-duration 8m
 cilium status --wait --wait-duration 3m >/dev/null
 receipt "cilium ready (nodes match mode on)"
 
