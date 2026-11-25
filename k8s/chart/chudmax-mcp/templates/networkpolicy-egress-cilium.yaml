@@ -1,0 +1,22 @@
+{{- if or (eq .Values.networkPolicy.egress.apiServer.mode "cilium") (and (eq .Values.networkPolicy.egress.apiServer.mode "auto") (.Capabilities.APIVersions.Has "cilium.io/v2/CiliumNetworkPolicy")) -}}
+# The kube-apiserver rule for Cilium clusters (rendered when mode: cilium, or
+# mode: auto on a cluster that has the Cilium CRDs — the chart README explains
+# the mode). The reserved entity matches the hostNetwork static pod regardless
+# of addressing, which no podSelector can (empty set under Cilium/Calico) and
+# no fixed port list needs to track (policies evaluate post-DNAT, where the
+# apiserver listens on 6443). Gated so a default install on a cluster without
+# the Cilium CRDs (stock kind) applies cleanly with the plain fallback.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "chudmax-mcp.fullname" . }}-apiserver
+  labels:
+    {{- include "chudmax-mcp.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "chudmax-mcp.selectorLabels" . | nindent 6 }}
+  egress:
+    - toEntities:
+        - kube-apiserver
+{{- end }}

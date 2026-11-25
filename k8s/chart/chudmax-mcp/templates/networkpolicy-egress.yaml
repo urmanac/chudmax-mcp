@@ -1,3 +1,5 @@
+{{- $mode := .Values.networkPolicy.egress.apiServer.mode -}}
+{{- $useCnp := or (eq $mode "cilium") (and (eq $mode "auto") (.Capabilities.APIVersions.Has "cilium.io/v2/CiliumNetworkPolicy")) -}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -23,18 +25,42 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    {{- if eq .Values.networkPolicy.egress.apiServer.mode "cidr" }}
-    # the kube-apiserver by service CIDR (the ipBlock alternative; unreliable
-    # under Cilium, which resolves the apiserver to its backends - F5)
+    {{- if $useCnp }}
+    # the kube-apiserver: carried by the CiliumNetworkPolicy rendered beside
+    # this policy (toEntities: kube-apiserver) — the one form that matches the
+    # hostNetwork static pod; a podSelector resolves to an empty set under
+    # Cilium/Calico, and NetworkPolicies evaluate post-DNAT, where the
+    # apiserver listens on 6443, not the Service's 443 (T-0037 phase 5).
+    {{- else if or (eq $mode "cidr") (eq $mode "auto") }}
+    # the kube-apiserver by ipBlock, on 443 (the Service port) AND 6443 (the
+    # post-DNAT backend port). mode: auto's fallback discovers the apiserver's
+    # real endpoint IPs at install time (the kubernetes Endpoints object) and
+    # unions them with the values' cidrs; on `helm template` (no cluster) only
+    # the values' list is available. Cilium caveat: ipBlock matches node IPs
+    # only with --policy-cidr-match-mode=nodes (see the chart README).
     - to:
+      {{- $cidrs := .Values.networkPolicy.egress.apiServer.cidrs | default list -}}
+      {{- $ep := lookup "v1" "Endpoints" "default" "kubernetes" -}}
+      {{- if $ep -}}
+      {{- range $subset := $ep.subsets -}}
+      {{- range $addr := $subset.addresses -}}
+      {{- $cidrs = append $cidrs (printf "%s/32" $addr.ip) -}}
+      {{- end -}}
+      {{- end -}}
+      {{- end -}}
+      {{- range $cidr := uniq $cidrs }}
         - ipBlock:
-            cidr: {{ .Values.networkPolicy.egress.apiServer.cidr | quote }}
+            cidr: {{ $cidr | quote }}
+      {{- end }}
       ports:
         - protocol: TCP
           port: 443
+        - protocol: TCP
+          port: 6443
     {{- else }}
-    # the kube-apiserver by its static pods' labels - Cilium matches policy on
-    # the resolved backend, so the podSelector pattern is the portable default
+    # the kube-apiserver by its static pods' labels — LEGACY: a hostNetwork
+    # static pod is NOT selectable (empty set under Cilium/Calico, T-0037
+    # phase 5); kept only for platforms whose apiserver runs as a regular pod.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -45,10 +71,13 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+        - protocol: TCP
+          port: 6443
     {{- end }}
     # the artifact server: source-watcher's storage serves the generated
     # artifact (status.artifact.url points there) - scoped to that
-    # controller's pods, not the whole namespace (F4)
+    # controller's pods by the labels the Flux install bundle actually puts on
+    # them (F4; the label receipted against the v2.10.1 bundle, phase 5)
     - to:
         - namespaceSelector:
             matchLabels:

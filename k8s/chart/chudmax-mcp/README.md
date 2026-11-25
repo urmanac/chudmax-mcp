@@ -18,8 +18,12 @@ The default values run the server in pod mode: `--http 8080 --host 0.0.0.0
 `artifact.json`, so a fetcher swap is visible on the next call without a
 restart. Before the ExternalArtifact exists (the `k8s/repo-sync/` work
 creates it), the fetcher WAITS — logging and retrying every resync period, no
-crash-loop — and self-heals when the artifact appears. The readiness probe is
-honest about the wait: the pod is ready only once `/data/current` exists.
+crash-loop — and self-heals when the artifact appears. Both containers are
+honestly probed: the fetcher is ready once `/data/current` exists, and the
+server's readiness probe POSTs `list_tickets` to `127.0.0.1:<port>/mcp`
+asserting HTTP 200 (GET alone is a 405) — sending the mounted bearer token
+when `server.auth.enabled` — so the pod is Ready only when the MCP surface
+actually answers.
 
 Both default image tags (`ghcr.io/urmanac/chudmax/fetcher:0.1.0`,
 `ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0`) are unpublished until the
@@ -70,12 +74,28 @@ it identifies a caller, not a person.)
 The egress NetworkPolicy is default-on; the rules it renders:
 
 - DNS (kube-system, UDP/TCP 53),
-- the **kube-apiserver** on 443 — `mode: podSelector` by default (the
-  apiserver's static pods, `component: kube-apiserver` in the namespace the
-  values name; Cilium matches policy on the resolved backend, which the
-  service-CIDR ipBlock alternative — `mode: cidr` — is unreliable under),
+- the **kube-apiserver** — `apiServer.mode` picks the shape:
+  - **`auto` (the default):** a `CiliumNetworkPolicy` with `toEntities:
+    [kube-apiserver]` when the cluster has the Cilium CRDs (the only form that
+    matches the `hostNetwork: true` static pod — a podSelector resolves to an
+    empty set under Cilium/Calico), otherwise a plain ipBlock rule. The rule
+    carries BOTH ports — 443 (the Service) and 6443 (the post-DNAT backend
+    port; policies evaluate post-DNAT). The fallback discovers the apiserver's
+    real endpoint IPs at install time (the `kubernetes` Endpoints object) on
+    top of the `apiServer.cidrs` list, so a default install works on stock
+    kind with no values.
+  - **`cilium`:** the CiliumNetworkPolicy unconditionally.
+  - **`cidr`:** the ipBlock rule over `apiServer.cidrs`. Under Cilium, ipBlock
+    matches node IPs only with `--policy-cidr-match-mode=nodes` — without it
+    the rule silently drops (documented; the phase-5 rehearsal installs
+    Cilium with the flag).
+  - **`podSelector`:** the static pods by label — LEGACY: it cannot match a
+    `hostNetwork: true` apiserver (empty set); kept for platforms whose
+    apiserver runs as a regular pod.
 - the **artifact server** — source-watcher's storage (default port 9090),
-  scoped to that controller's PODS via `sourceController.selector`,
+  scoped to that controller's PODS via `sourceController.selector` — the
+  labels the Flux install bundle actually puts on the pods (`app:
+  source-watcher`; there is no `app.kubernetes.io/name` label on them),
 
 plus `networkPolicy.egress.extra` passthrough. The podSelectors hit ALL
 containers in the pod: a server with other egress needs adjusts the

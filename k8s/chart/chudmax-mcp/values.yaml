@@ -61,6 +61,13 @@ server:
   args: ["--http", "8080", "--host", "0.0.0.0", "--data-root", "/data"]
   env: []
   port: 8080           # the Service and the ingress NetworkPolicy target this
+  # Readiness: an exec probe POSTs list_tickets to 127.0.0.1:<port>/mcp and
+  # asserts HTTP 200 (GET /mcp is a 405 — the probe speaks the protocol;
+  # architecture.md's requirement, T-0037 phase 5). When auth.enabled it reads
+  # the mounted token (below) and sends the Bearer header — a headerless POST
+  # would 401 and the pod would never go ready. The probe answers honestly even
+  # before the first artifact arrives; the fetcher's `test -e current` probe
+  # still gates the POD's readiness until then.
   resources: {}
   # Optional bearer auth for the HTTP transport (kubernetes/mcp.md's "bearer
   # token in the hub's headers"). The Secret is mounted read-only at
@@ -90,16 +97,26 @@ networkPolicy:
       selector:
         k8s-app: kube-dns
     # The fetcher's watch client (controller-runtime) talks to the
-    # kube-apiserver over 443 — the easy-to-miss rule. The default targets the
-    # apiserver's static pods by label, which Cilium (Cozystack's CNI) resolves
-    # correctly; an ipBlock on the service CIDR is unreliable there (F5,
-    # T-0037 phase 4b). Set mode: cidr for the ipBlock alternative.
+    # kube-apiserver over 443 (F5, T-0037 phase 4b). mode: auto — the DEFAULT —
+    # renders a CiliumNetworkPolicy (toEntities: kube-apiserver) when the
+    # cluster has the Cilium CRDs (Cozystack's CNI; the only form that matches
+    # the hostNetwork static pod), and falls back to a plain ipBlock rule (443
+    # AND the post-DNAT backend port 6443, endpoint IPs discovered at install
+    # time) otherwise — so a default install works on stock kind (no Cilium
+    # CRDs) without failing on a missing CRD. Explicit modes: cilium | cidr |
+    # podSelector; the podSelector form cannot match a hostNetwork apiserver
+    # (empty set under Cilium/Calico) — legacy, for apiservers running as
+    # regular pods. See the chart README.
     apiServer:
-      mode: podSelector   # podSelector | cidr
-      selector:
+      mode: auto
+      # Extra ipBlock CIDRs for the auto fallback and cidr mode; the apiserver's
+      # real endpoint IPs (the kubernetes Endpoints) are added on top of these
+      # at install time.
+      cidrs:
+        - 10.96.0.0/12
+      selector:              # podSelector mode only
         namespace: kube-system
         component: kube-apiserver
-      cidr: 10.96.0.0/12  # used only in cidr mode
     # Where the artifact tarballs come from (status.artifact.url points here).
     # The generated artifact is served by source-watcher's storage server
     # (default :9090), not source-controller — the rule is scoped to that
@@ -109,7 +126,10 @@ networkPolicy:
       namespace: flux-system
       port: 9090
       selector:
-        app.kubernetes.io/name: source-watcher
+        # The labels the Flux install bundle actually puts on the pods — there
+        # is no app.kubernetes.io/name label on them (receipted against the
+        # v2.10.1 bundle, T-0037 phase 5).
+        app: source-watcher
     extra: []
   # Ingress is rendered only when server.enabled — the fetcher listens nowhere.
   ingress:
