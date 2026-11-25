@@ -20,7 +20,6 @@ MR !17 on `gitlab.com/kingdonb/chudmax` (source branch `plan/kubernetes-home`, `
 
 ## Open Questions
 
-1. **Branch identity:** assumed from the mirrored branch `plan/kubernetes-home` (its diff adds exactly the six plan files + T-0037 the request names). The Helix mirror was detached (now `403`) before this could be checked against GitLab directly. The project secret `GITLAB_SECRET_TOKEN` (added 2026-11-25) injects only into sessions created after it — the next session should read `GET /api/v4/projects/kingdonb%2Fchudmax/merge_requests/17` and close this question.
-2. **Ticket granularity:** I assumed one ticket per phase (1–18) plus one conditional Strata-fork ticket for the web/engine split (18–19 total). The plan says "each phase gets its own ticket when it starts". Do you want any phase split further (phase 7 canary rehearsal is the largest), or merged (4+5 could be one)?
-3. **Pre-creating tickets:** the plan creates each phase's ticket only when that phase starts. Should the spike's ticket list be pre-registered in `chudmax/tickets.md` after this task, or stay in the spike until each phase begins?
+1. **Ticket granularity:** I assumed one ticket per phase (1–18) plus one conditional Strata-fork ticket for the web/engine split (18–19 total). The plan says "each phase gets its own ticket when it starts". Do you want any phase split further (phase 7 canary rehearsal is the largest), or merged (4+5 could be one)?
+2. **Pre-creating tickets:** the plan creates each phase's ticket only when that phase starts. Should the spike's ticket list be pre-registered in `chudmax/tickets.md` after this task, or stay in the spike until each phase begins?
 4. **CI capability:** the plan rehearses sync and canary on kind clusters inside CI (phases 5, 7, 8). The repo's `.gitlab-ci.yml` currently only includes the secret-detection template; whether the GitLab runners are privileged (able to run kind) is not addressed anywhere in the plan. Is that already known?

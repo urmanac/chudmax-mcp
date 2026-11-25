@@ -2,7 +2,9 @@
 
 This document is the SPIKE itself: the evaluation of MR !17 and the plan-about-the-plan for T-0037. Nothing here is built. Labels follow `chudmax/AGENTS.md`.
 
-## 1. What MR !17 is (`verified-here` from the mirror branch)
+## 1. What MR !17 is (`verified-here` from the mirror branch, re-verified against GitLab)
+
+- **MR !17 confirmed via the GitLab API** (2026-11-25, project secret `GITLAB_SECRET_TOKEN`, Maintainer): iid 17, "Plan: chudmax's home, with Flux keeping the repo current (T-0037)", state `opened`, not draft, `source_branch: plan/kubernetes-home` → `main`, head `d156ed0`, `can_be_merged`, no conflicts. A fresh clone of `gitlab.com/kingdonb/chudmax` has `main` at `70c397e` and `plan/kubernetes-home` at `d156ed0` — byte-identical to what the mirror served before it was detached. Selftest re-run on the MR head from the fresh clone: all checks PASS, exit 0.
 
 - Source branch `plan/kubernetes-home`, three commits ending at `d156ed0` "Kubernetes plan, third pass: no cluster now, parts first, MetalLB address (T-0037)".
 - Diff vs `main`: six new files in `kubernetes/` (README 107, repo-sync 98, architecture 158, mcp 79, phases 57, personas 32 lines), T-0037 appended to `tickets.md` (+29, making 37 tickets), one STATE.md count line. Docs only — `tools/` untouched.
