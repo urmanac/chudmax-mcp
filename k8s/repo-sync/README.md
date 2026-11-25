@@ -105,12 +105,16 @@ the fetcher container mounts the ServiceAccount token.
 
 | Secret | Created by | Keys |
 |---|---|---|
-| `chudmax-repo-auth` | the human (phase 12) | SSH deploy key: `identity`, `known_hosts` (with the pinned host key) — or HTTPS token: `username`, `password` |
-| `webhook-token` | the human (phase 12) | `token` (a random string; the same value goes into the GitLab webhook's "Secret token" field) |
-| `chudmax-notifications-credentials` | the human (phase 12) | `address` (the channel's webhook URL); plus `token` if the chosen provider type wants one |
+| `chudmax-repo-auth` | the installer | SSH deploy key: `identity`, `known_hosts` (with the pinned host key) — or HTTPS token: `username`, `password` |
+| `webhook-token` | the installer | `token` (a random string; the same value goes into the GitLab webhook's "Secret token" field) |
+| `chudmax-notifications-credentials` | the installer | `address` (the channel's webhook URL); plus `token` if the chosen provider type wants one |
 
-How these Secrets get created (kubectl vs SOPS vs External Secrets) is the
-secrets-mechanism decision, deferred to the owner.
+An installer of this chart creates these on their **own** deployment with
+**their own** provider credentials: a GitLab token that can read their source
+repo, a random webhook token, and the webhook address of the chat channel
+they want the alerts in. "Phase 12" is only how chudmax's own deployment
+schedules the same step; how the Secrets get created (kubectl vs SOPS vs
+External Secrets) is each deployment's choice.
 
 ## Webhook and channel (phase-12 decisions, knobs ready)
 
