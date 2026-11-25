@@ -56,7 +56,7 @@ jobs:
           helm template rel k8s/umbrella/chudmax/subcharts/chudmax-engine > /tmp/eng-defaults.yaml
           helm template rel k8s/umbrella/chudmax/subcharts/chudmax-engine --set endpoint.host=203.0.113.10 > /tmp/eng-endpoint.yaml
           helm template rel k8s/umbrella/chudmax/subcharts/chudmax-web > /tmp/web-defaults.yaml
-          helm template rel k8s/umbrella/chudmax/subcharts/chudmax-web --set allowedHosts={web.example.internal,other.example} --set port=9090 > /tmp/web-custom.yaml
+          helm template rel k8s/umbrella/chudmax/subcharts/chudmax-web --set 'allowedHosts={web.example.internal,other.example}' --set port=9090 > /tmp/web-custom.yaml
           /tmp/kubeconform -strict -summary /tmp/eng-defaults.yaml /tmp/eng-endpoint.yaml /tmp/web-defaults.yaml /tmp/web-custom.yaml
       - name: LAN-address hygiene (no RFC1918-shaped address in any phase-6 public artifact; TEST-NET-3 203.0.113.10 is the only IP in templates)
         run: |
