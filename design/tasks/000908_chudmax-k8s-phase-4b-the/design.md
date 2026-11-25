@@ -125,3 +125,21 @@ README.md                        naming, mock-by-default, build commands
 - **The canonical selftest's checks transfer cleanly** to a fresh implementation: keyed-by-id
   results, the trim-note regex, the advertised-default cross-check — the mock's suite is the
   same species with pod-mode + auth + hygiene checks added.
+- **Integration-shaped testing catches what unit tests with absolute paths miss** (Fable's
+  method, now proven twice): the read_doc pod-mode bug survived the first wave's suites because
+  both exercised pod mode with fixture roots in absolute paths and checked FACTS across the
+  swap — but the bug lived in the `relative_to` between an unresolved base and a resolved
+  candidate, i.e. in `read_doc`, and only showed when a scratch copy + fake fetcher volume +
+  the REAL launch flags were run. The suites now carry the two shapes forever: (1) a
+  relative-launch case — cwd = repo root, relative `--tickets tickets.md` (the `.pi/mcp.json`
+  shape) — exercising `read_doc AGENTS.md` + `list_docs`; (2) pod-mode `read_doc` before/after
+  a revision swap and after the prune, with the doc CONTENT asserted and the refusal asserted
+  absent. The canonical fresh-clone run is the stronger receipt: the relative-launch check
+  answered with the REAL AGENTS.md content and indexed 31 real docs — the scratch-copy run
+  only proved the shape.
+- **Per-call snapshot shape (Fable's, both servers now):** resolve `current` ONCE at the START
+  of each call and read the whole call through that resolved directory — one call never mixes
+  two revisions, a mid-call swap is invisible until the next call, and `relative_to` works
+  because base and candidate resolve the same way. Plain-file mode is the opposite: resolve
+  at STARTUP (no symlink churn behind a plain path — and the startup resolve is exactly what
+  makes a relative `--tickets` work from any cwd).
