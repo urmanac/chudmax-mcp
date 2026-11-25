@@ -114,9 +114,11 @@ probe() { # probe <url> — an in-cluster pod; prints the HTTP code and never hi
 
 say "5. the engine endpoint: a ladder of candidates, the first route pods can reach wins"
 # docker network inspect may list the IPv6 IPAM block first — grep for an
-# IPv4-shaped gateway specifically (CI hit fc00::/16 once).
+# IPv4-shaped gateway specifically (CI hit fc00::/16 once). If no IPv4 gateway
+# parses, die loudly — no private-LAN fallback literal is allowed in this file
+# (the workflow's RFC1918 hygiene grep is the tripwire).
 GW="$(docker network inspect kind | grep -o '"Gateway": *"[0-9.]*"' | head -1 | cut -d'"' -f4)"
-[ -n "$GW" ] || GW=172.18.0.1   # docker's kind-bridge gateway if the parse comes up empty
+[ -n "$GW" ] || die "no IPv4 gateway parsed from docker network inspect kind ($(docker network inspect kind | grep -c Gateway) Gateway entries)"
 CIP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' chudmax-mock-engine)"
 echo "  bridge gateway: $GW   mock-engine bridge IP: $CIP"
 ENGINE_HOST=""
