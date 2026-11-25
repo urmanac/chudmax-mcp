@@ -15,10 +15,20 @@ spec:
         {{- include "chudmax-mcp.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "chudmax-mcp.serviceAccountName" . }}
+      # Pod-level (the only level this field exists at — F3, T-0037 phase 4b).
+      automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: fetcher
           image: {{ include "chudmax-mcp.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           args:
             - watch
             - --namespace
@@ -37,6 +47,13 @@ spec:
           volumeMounts:
             - name: data
               mountPath: {{ .Values.fetcher.root }}
+            # The projected token: short-lived (kubelet-refreshed) plus the
+            # cluster CA, mounted at the standard path so the in-cluster
+            # client config keeps working. The pod-level automount above is
+            # off — only this mount carries credentials into the pod.
+            - name: sa-token
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
           readinessProbe:
             # /data/current exists once the first verified artifact has been
             # swapped in; before that the sidecar is not ready (honest state).
@@ -48,6 +65,10 @@ spec:
         - name: server
           image: "{{ .Values.server.image.repository }}:{{ .Values.server.image.tag }}"
           imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           {{- with .Values.server.command }}
           command:
             {{- toYaml . | nindent 12 }}
@@ -56,17 +77,25 @@ spec:
           args:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if .Values.server.auth.enabled }}
+            - --bearer-token-file
+            - /var/run/mcp-auth/token
+          {{- end }}
           {{- with .Values.server.env }}
           env:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          automountServiceAccountToken: {{ .Values.server.automountServiceAccountToken }}
           ports:
             - name: http
               containerPort: {{ .Values.server.port }}
           volumeMounts:
             - name: data
               mountPath: {{ .Values.fetcher.root }}
+          {{- if .Values.server.auth.enabled }}
+            - name: mcp-auth
+              mountPath: /var/run/mcp-auth
+              readOnly: true
+          {{- end }}
           resources:
             {{- toYaml .Values.server.resources | nindent 12 }}
         {{- end }}
@@ -74,3 +103,23 @@ spec:
         - name: data
           emptyDir:
             sizeLimit: {{ .Values.volume.sizeLimit }}
+        # The fetcher's bounded, auto-refreshed token + the cluster CA.
+        - name: sa-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+        {{- if .Values.server.auth.enabled }}
+        - name: mcp-auth
+          secret:
+            secretName: {{ .Values.server.auth.secretName | quote }}
+            items:
+              - key: {{ .Values.server.auth.secretKey | quote }}
+                path: token
+        {{- end }}

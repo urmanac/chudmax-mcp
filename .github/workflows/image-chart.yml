@@ -1,13 +1,22 @@
-# The phase-3 CI re-proof: the chart lints and templates, the image builds for
-# both architectures. No registry push — publishing is a later milestone.
+# The phase-4b CI re-proof: the chart lints and templates (now with the mock
+# server in the default values), kubeconform validates the RENDERED templates
+# in both value variants (the check that would have caught F3 — proven by a
+# negative probe against the old broken shape), the fetcher image builds for
+# both architectures, and the mock gets its own test + image jobs.
 #
-# The image build is emulation-free (the Dockerfile pins both RUN-bearing
-# stages to $BUILDPLATFORM and cross-compiles the Go binary), so no qemu is
-# needed here. An arm64 *runtime* smoke needs binfmt + qemu-user-static on the
-# runner; it was proven off-CI and stays out of this workflow.
+# The image builds are emulation-free: the fetcher Dockerfile pins both
+# RUN-bearing stages to $BUILDPLATFORM and cross-compiles the Go binary; the
+# mock Dockerfile has no RUN at all. No qemu is needed for either build. An
+# arm64 *runtime* smoke needs binfmt on the runner; it was proven off-CI (and
+# in-sandbox via host-side qemu) and stays out of this workflow.
 #
-# Fallback if podman-in-Actions ever frictions out: swap the image job to
-# docker buildx (docker/setup-buildx-action) — same Dockerfile, same platforms.
+# The chart renders only core Kubernetes kinds (Deployment, Service, RBAC,
+# NetworkPolicy), so kubeconform's default k8s schemas cover everything it
+# renders; the Flux-schema validation of the repo-sync manifests lives in
+# repo-sync-validate.yml.
+#
+# Fallback if podman-in-Actions ever frictions out: swap the image jobs to
+# docker buildx (docker/setup-buildx-action) — same Dockerfiles, same platforms.
 
 name: image-chart
 
@@ -26,9 +35,11 @@ jobs:
           version: v3.16.4
       - name: lint
         run: helm lint k8s/chart/chudmax-mcp
-      - name: template (defaults - server disabled)
-        run: helm template rel k8s/chart/chudmax-mcp
-      - name: template (server enabled, custom values)
+      - name: template (defaults - the mock server)
+        run: helm template rel k8s/chart/chudmax-mcp > /tmp/rendered-defaults.yaml
+      - name: template (fetcher only - server disabled)
+        run: helm template rel k8s/chart/chudmax-mcp --set server.enabled=false > /tmp/rendered-fetcheronly.yaml
+      - name: template (bring-your-own server)
         run: |
           helm template rel k8s/chart/chudmax-mcp \
             --set server.enabled=true \
@@ -37,6 +48,13 @@ jobs:
             --set server.command[0]=/bin/my-server \
             --set externalArtifact.name=my-artifact \
             --set server.port=9090
+      - name: kubeconform the rendered templates (both value variants)
+        run: |
+          curl -fsSL -o /tmp/kubeconform.tgz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xf /tmp/kubeconform.tgz -C /tmp kubeconform
+          /tmp/kubeconform -strict -summary /tmp/rendered-defaults.yaml
+          /tmp/kubeconform -strict -summary /tmp/rendered-fetcheronly.yaml
 
   image:
     runs-on: ubuntu-latest
@@ -77,6 +95,63 @@ jobs:
             --digest "$DIGEST" --root /data
           # Warm the local store for the volume-contract check, one retry for
           # the registry transient that hit this repo's CI before.
-          podman pull alpine:3.21 || podman pull alpine:3.21
-          podman run --rm -v smokedata:/data alpine:3.21 \
+          podman pull alpine:3.22 || podman pull alpine:3.22
+          podman run --rm -v smokedata:/data alpine:3.22 \
             sh -c 'test -L /data/current && test -f /data/current/artifact.json && echo volume-contract OK'
+
+  mock-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: the mock's selftest (both transports, the per-call contract)
+        run: python3 k8s/tickets-mcp-mock/test_tickets_mcp_mock.py
+
+  mock-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman
+      - name: build the manifest list (amd64 + arm64, no push)
+        run: >
+          podman build --platform linux/amd64,linux/arm64
+          --manifest ci-mock:0.1.0
+          -f k8s/tickets-mcp-mock/Dockerfile k8s/tickets-mcp-mock
+      - name: verify both architectures are in the list
+        run: |
+          podman manifest inspect ci-mock:0.1.0 | grep -c '"architecture": "arm64"'
+          podman manifest inspect ci-mock:0.1.0 | grep -c '"architecture": "amd64"'
+      - name: amd64 HTTP smoke (the mock's transports)
+        run: |
+          podman run -d --rm --name mock-smoke -p 127.0.0.1:18080:8080 ci-mock:0.1.0 \
+            --http 8080 --host 0.0.0.0
+          for i in $(seq 1 15); do
+            curl -fsS -o /dev/null http://127.0.0.1:18080/mcp -X POST \
+              -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+              && break
+            sleep 1
+          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+            http://127.0.0.1:18080/mcp)
+          [ "$code" = 200 ] || { echo "initialize: HTTP $code (want 200)"; podman logs mock-smoke; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code} %{size_download}' -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            http://127.0.0.1:18080/mcp)
+          [ "$code" = "202 0" ] || { echo "notification: $code (want '202 0')"; exit 1; }
+          headers=$(curl -s -D - -o /dev/null http://127.0.0.1:18080/mcp)
+          echo "$headers" | grep -qi '^HTTP/1.1 405' || { echo "GET: want 405"; exit 1; }
+          echo "$headers" | grep -qi '^allow: post' || { echo "GET: want Allow: POST"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' -d '{not json' \
+            http://127.0.0.1:18080/mcp)
+          [ "$code" = 400 ] || { echo "malformed: HTTP $code (want 400)"; exit 1; }
+          podman stop mock-smoke
+          echo mock HTTP smoke OK

@@ -1,6 +1,7 @@
-# The chudmax fetcher image: the artifact sidecar only. The pod's MCP server is
-# bring-your-own (the chart's optional server container runs the user's image);
-# nothing else belongs in this image.
+# The chudmax fetcher image: the artifact sidecar only. The pod's MCP server
+# runs in its own container (the chart's default is the bundled mock,
+# k8s/tickets-mcp-mock/ — bring your own by overriding values); nothing else
+# belongs in this image.
 #
 # Build context is k8s/ (not the repo root):
 #
@@ -28,11 +29,11 @@ RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
 # no drift: the base's own passwd/group plus the nonroot entry (uid/gid 65532,
 # the distroless convention). alpine's base already carries the CA bundle the
 # fetcher needs for the kube-apiserver's HTTPS.
-FROM --platform=$BUILDPLATFORM alpine:3.21 AS users
+FROM --platform=$BUILDPLATFORM alpine:3.22 AS users
 RUN { cat /etc/passwd; echo "nonroot:x:65532:65532:Linux User,,,:/:/sbin/nologin"; } > /passwd \
  && { cat /etc/group;  echo "nonroot:x:65532:"; } > /group
 
-FROM alpine:3.21
+FROM alpine:3.22
 COPY --from=users /passwd /etc/passwd
 COPY --from=users /group /etc/group
 COPY --from=build /out/fetcher /usr/local/bin/fetcher

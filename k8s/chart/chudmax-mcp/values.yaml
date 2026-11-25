@@ -1,5 +1,7 @@
 # Default values for the chudmax-mcp chart.
-# The image ships the fetcher only; the pod's MCP server is bring-your-own.
+# The default install runs TWO containers: the fetcher sidecar and the bundled
+# mock ticket server (k8s/tickets-mcp-mock/). Bring your own server by
+# overriding the server.* values below.
 
 nameOverride: ""
 fullnameOverride: ""
@@ -9,18 +11,26 @@ image:
   # publishing milestone — until then build/load the image yourself
   # (podman build --platform linux/amd64,linux/arm64 --manifest
   # <registry>/<name>:<tag> -f k8s/image/Dockerfile k8s).
-  repository: ghcr.io/urmanac/chudmax/mcp
+  repository: ghcr.io/urmanac/chudmax/fetcher
   tag: "0.1.0"
   pullPolicy: IfNotPresent
   # Optional: pin by digest instead of tag (digest wins when set).
   digest: ""
 
+# Pod-level service-account token automount. Only the fetcher container needs
+# a token (it watches the one ExternalArtifact); it gets a short-lived
+# PROJECTED token (volume "sa-token") regardless of this knob, so a user's own
+# server container is not handed credentials it did not ask for. This used to
+# be a per-server-container value — that field is pod-level only and made a
+# server-enabled install unrenderable (F3, T-0037 phase 4b).
+automountServiceAccountToken: false
+
 # The ONE ExternalArtifact the fetcher is allowed to read (Role: get, watch).
 # The chart does not create it — source-watcher's ArtifactGenerator does;
 # the manifests that generate it live in k8s/repo-sync/ (see that README for
 # the install order and the platform requirement). Until it exists, the
-# fetcher container exits and restarts with backoff (its startup read is
-# fatal by design); it self-heals once the artifact appears.
+# fetcher container WAITS, logging and retrying every resync period — it does
+# not crash-loop (T-0037 phase 4b) — and self-heals once the artifact appears.
 externalArtifact:
   name: chudmax-tickets
 
@@ -29,24 +39,37 @@ fetcher:
   resync: 1m
   resources: {}
 
-# Bring your own MCP server. Disabled by default: the chart ships the fetcher
-# sidecar only. When enabled, this container runs YOUR image, mounts the same
-# shared volume, and reads the volume contract documented in
-# k8s/fetcher/README.md (revisions/, the `current` symlink swapped atomically,
-# artifact.json beside every tree) — rereading through the symlink on every
-# call, no restarts.
+# The pod's MCP server container. The default is this repo's own mock
+# (k8s/tickets-mcp-mock/): the fixed per-call contract — every call rereads
+# /data/current (the fetcher's symlink) and its artifact.json, no restarts.
+# Bring your own: override image/command/args (keep --data-root on the shared
+# volume so the per-call contract holds), or set enabled: false to run the
+# fetcher alone. The mock image tag is unpublished until the phase-10
+# publishing milestone — build/load it yourself meanwhile (podman build
+# --platform linux/amd64,linux/arm64 --manifest <registry>/<name>:<tag>
+# -f k8s/tickets-mcp-mock/Dockerfile k8s/tickets-mcp-mock).
 server:
-  enabled: false
+  enabled: true
   image:
-    repository: ""     # required when enabled
-    tag: ""
+    repository: ghcr.io/urmanac/chudmax/tickets-mock
+    tag: "0.1.0"
     pullPolicy: IfNotPresent
-  command: []          # required when enabled (the user image's entrypoint rarely suffices)
-  args: []
+  # --host 0.0.0.0 matters: the Service reaches the POD IP, not the container's
+  # localhost (caught by the phase-4b smoke test).
+  command: ["python3", "/app/ticket_mcp_mock.py"]
+  args: ["--http", "8080", "--host", "0.0.0.0", "--data-root", "/data"]
   env: []
-  port: 8080           # the Service (when enabled) and the ingress NetworkPolicy target this
-  automountServiceAccountToken: false
+  port: 8080           # the Service and the ingress NetworkPolicy target this
   resources: {}
+  # Optional bearer auth for the HTTP transport (kubernetes/mcp.md's "bearer
+  # token in the hub's headers"). The Secret is mounted read-only at
+  # /var/run/mcp-auth and --bearer-token-file is appended to args; the mock
+  # reads the file PER REQUEST, so rotating the Secret needs no restart.
+  # The token VALUE never appears here — only the Secret's name.
+  auth:
+    enabled: false
+    secretName: ""     # required when auth.enabled
+    secretKey: "token"
 
 service:
   enabled: true        # rendered only when server.enabled — nothing points at a disabled pod
@@ -66,15 +89,26 @@ networkPolicy:
       selector:
         k8s-app: kube-dns
     # The fetcher's watch client (controller-runtime) talks to the
-    # kube-apiserver over 443 — the easy-to-miss rule. Set it to your
-    # cluster's service CIDR (kubeadm default below).
+    # kube-apiserver over 443 — the easy-to-miss rule. The default targets the
+    # apiserver's static pods by label, which Cilium (Cozystack's CNI) resolves
+    # correctly; an ipBlock on the service CIDR is unreliable there (F5,
+    # T-0037 phase 4b). Set mode: cidr for the ipBlock alternative.
     apiServer:
-      cidr: 10.96.0.0/12
+      mode: podSelector   # podSelector | cidr
+      selector:
+        namespace: kube-system
+        component: kube-apiserver
+      cidr: 10.96.0.0/12  # used only in cidr mode
     # Where the artifact tarballs come from (status.artifact.url points here).
+    # The generated artifact is served by source-watcher's storage server
+    # (default :9090), not source-controller — the rule is scoped to that
+    # controller's PODS now, not the whole namespace (F4, T-0037 phase 4b).
     # Match your platform's Flux install (the phase-12 inventory walks it).
     sourceController:
       namespace: flux-system
-      port: 80
+      port: 9090
+      selector:
+        app.kubernetes.io/name: source-watcher
     extra: []
   # Ingress is rendered only when server.enabled — the fetcher listens nowhere.
   ingress:

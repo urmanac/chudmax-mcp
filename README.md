@@ -1,9 +1,11 @@
 # chudmax-mcp
 
-The artifact-fetcher sidecar and the packaging home for the ChudMax MCP pod.
+The packaging home for the ChudMax MCP pod: the artifact-fetcher sidecar, the
+mock ticket server, and the chart that runs both.
 
 Flux (source-controller) fetches, verifies and packs a git repo and serves the
-result as an artifact. The fetcher in [`k8s/fetcher/`](k8s/fetcher/) is the
+result as an artifact; source-watcher's ArtifactGenerator narrows it to what
+the ticket server reads. The fetcher in [`k8s/fetcher/`](k8s/fetcher/) is the
 consuming side: it watches one ExternalArtifact, downloads the tarball, checks
 the digest, unpacks beside the previous copy, and swaps a symlink so a reader
 never sees half a tree. No git code, no restarts, no half-updated reads.
@@ -15,34 +17,27 @@ never sees half a tree. No git code, no restarts, no half-updated reads.
     verify, unpack, swap.
   - `watch --namespace NS --name NAME --root DIR` — read the one ExternalArtifact
     the pod's Role allows (`get`, `watch`) at startup, then watch it; re-reads
-    every minute as a fallback and reconnects when the stream drops.
+    every minute as a fallback and reconnects when the stream drops. An
+    artifact that does not exist yet (a fresh install) is waited for, not fatal.
+- **The mock ticket server** — [`k8s/tickets-mcp-mock/`](k8s/tickets-mcp-mock/):
+  a public stand-in for the canonical tickets-mcp (which stays private with the
+  real data), signature-compatible with it and carrying none of it: the seven
+  read-only tools over stdio and HTTP, and the fixed per-call contract — every
+  call rereads `current` and its `artifact.json`. Its fixture data is invented
+  end to end.
 - **The volume contract** — see [`k8s/fetcher/README.md`](k8s/fetcher/README.md):
   content-addressed revision dirs, a `current` symlink swapped atomically, and
   an `artifact.json` beside every tree (url, revision, digest, produced,
-  unpacked, source).
+  unpacked, origin_revision, source).
 
-## Bring your own MCP server
+## The chart's default install
 
-The fetcher image ships the fetcher and nothing else — this repo does not ship
-a ticket server. The chart runs an optional, values-driven second container for
-your own MCP server: it mounts the same shared volume and reads the files the
-fetcher maintains — through the `current` symlink, rereading on every call. The
-volume contract your server codes against is documented in
-[`k8s/fetcher/README.md`](k8s/fetcher/README.md).
-
-```yaml
-server:
-  enabled: true
-  image:
-    repository: <your-server-image>
-    tag: <tag>
-  command: ["<your-server-binary>"]
-  args: ["--root", "/data/current"]
-  port: 8080
-```
-
-When the server is enabled, the chart also renders its Service and an ingress
-NetworkPolicy for that port; disabled, the pod is fetcher-only.
+`helm install` runs TWO containers: the fetcher sidecar and the bundled mock
+server (`--http 8080 --host 0.0.0.0 --data-root /data`), with a Service and an
+ingress NetworkPolicy for the mock's port. The mock is the worked example of
+the server interface; the chart README
+([`k8s/chart/chudmax-mcp/README.md`](k8s/chart/chudmax-mcp/README.md)) covers
+the defaults, the bring-your-own override, and the optional bearer auth.
 
 ## Install
 
@@ -62,24 +57,36 @@ Two things a fresh install does not have yet:
 - **The ExternalArtifact.** The chart only needs its name
   (`externalArtifact.name`) — source-watcher's ArtifactGenerator creates it;
   the manifests live in `k8s/repo-sync/`. Until it exists, the fetcher
-  container exits and restarts with backoff (its startup read is
-  fatal by design) and self-heals once the artifact appears.
-- **The published image.** The default tag `ghcr.io/urmanac/chudmax/mcp:0.1.0`
-  is unpublished until the publishing milestone. Build it yourself meanwhile:
+  container WAITS (logging and retrying every resync period — it does not
+  crash-loop) and self-heals once the artifact appears.
+- **The published images.** The default tags
+  `ghcr.io/urmanac/chudmax/fetcher:0.1.0` and
+  `ghcr.io/urmanac/chudmax/tickets-mock:0.1.0` are unpublished until the
+  publishing milestone. Build them yourself meanwhile:
 
   ```
   podman build --platform linux/amd64,linux/arm64 \
-    --manifest ghcr.io/urmanac/chudmax/mcp:0.1.0 \
+    --manifest ghcr.io/urmanac/chudmax/fetcher:0.1.0 \
     -f k8s/image/Dockerfile k8s
+  podman build --platform linux/amd64,linux/arm64 \
+    --manifest ghcr.io/urmanac/chudmax/tickets-mock:0.1.0 \
+    -f k8s/tickets-mcp-mock/Dockerfile k8s/tickets-mcp-mock
   ```
 
 ## Status
 
 - The fetcher is complete and tested (tarball fixtures over HTTP, fake-client
-  watch tests; no cluster needed).
+  watch tests; no cluster needed), including the phase-4b fixes: the shared
+  tunables actually parse (a regression test locks the order), the fresh-install
+  wait replaces the startup crash, and artifact.json records the origin revision
+  the generator annotates.
+- The mock is complete and tested: 38 checks over both transports, including
+  the per-call proof (a symlink swap is visible on the next call without a
+  restart, and pruning the starting revision changes nothing).
 - CI runs on every push: vet, tests, arm64 build check for the fetcher
-  (`fetcher-test`); chart lint/template and a two-architecture image build, no
-  push (`image-chart`).
-- The image is one manifest list for amd64 and arm64 with an emulation-free
-  build (the Dockerfile pins its run stages to the build platform and
-  cross-compiles the Go binary).
+  (`fetcher-test`); chart lint/template in three value variants, kubeconform on
+  the rendered templates, and two-architecture image builds for BOTH images, no
+  push (`image-chart`); the mock's selftest (`mock-test`); the Flux-schema
+  validation of the repo-sync manifests (`repo-sync-validate`).
+- Both images are manifest lists for amd64 and arm64 with emulation-free builds
+  (the fetcher cross-compiles; the mock has no RUN at all).
