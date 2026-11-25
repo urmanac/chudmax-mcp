@@ -6,6 +6,7 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -13,6 +14,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
+
+// originRevisionAnnotation is the OCI annotation key source-watcher's
+// ArtifactGenerator records the git-side revision under, on the generated
+// ExternalArtifact's status.artifact.metadata (source-watcher api v1beta1's
+// ArtifactOriginRevisionAnnotation). The fetcher reads it with the get/watch
+// verbs it already has; the git commit survives the content-hash revision.
+const originRevisionAnnotation = "org.opencontainers.image.revision"
 
 // newClient builds the k8s client the watcher reads with. In the pod this is
 // the in-cluster config; locally, a KUBECONFIG. The sidecar only ever reads:
@@ -58,6 +66,7 @@ func runWatch(ctx context.Context, c client.WithWatch, _ *runtime.Scheme, ns, na
 		}
 		o.Revision = a.Revision
 		o.Produced = rfc3339(a.LastUpdateTime)
+		o.OriginRevision = a.Metadata[originRevisionAnnotation]
 		swapped, err := FetchAndSwap(ctx, a.URL, a.Digest, root, o)
 		if err != nil {
 			// The previous tree keeps serving; the stream keeps running and
@@ -73,6 +82,18 @@ func runWatch(ctx context.Context, c client.WithWatch, _ *runtime.Scheme, ns, na
 	for {
 		ea := &sourcev1.ExternalArtifact{}
 		if err := c.Get(ctx, key, ea); err != nil {
+			// A fresh install: the repo-sync work creates the ExternalArtifact
+			// after the pod starts. Wait with backoff and stay up instead of
+			// crash-looping (T-0037 phase 4b); anything else still exits loudly.
+			if apierrors.IsNotFound(err) {
+				log.Printf("watch: %s/%s does not exist yet, waiting (retry every %s)", ns, name, resync)
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(resync):
+				}
+				continue
+			}
 			return err
 		}
 		if err := observe(ea); err != nil {

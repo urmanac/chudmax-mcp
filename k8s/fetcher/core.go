@@ -18,26 +18,28 @@ import (
 // the spec review adopted: 3 retries, retention 3, caps 100 MiB downloaded /
 // 200 MiB unpacked, all flag-overridable.
 type CoreOpts struct {
-	Retries       int    // download retries inside ArchiveFetcher
-	Keep          int    // revision dirs to keep after a swap (current included)
-	MaxDownloadSz int    // tarball size cap
-	MaxUntarSz    int    // unpacked size cap
-	Revision      string // the artifact revision, when the caller knows it (watch mode)
-	Produced      string // when the producer made the artifact (watch mode), RFC3339
-	Source        string // what handed us the artifact, recorded in artifact.json
-	Now           func() time.Time
+	Retries        int    // download retries inside ArchiveFetcher
+	Keep           int    // revision dirs to keep after a swap (current included)
+	MaxDownloadSz  int    // tarball size cap
+	MaxUntarSz     int    // unpacked size cap
+	Revision       string // the artifact revision, when the caller knows it (watch mode)
+	Produced       string // when the producer made the artifact (watch mode), RFC3339
+	OriginRevision string // the git-side revision the generator recorded (watch mode)
+	Source         string // what handed us the artifact, recorded in artifact.json
+	Now            func() time.Time
 }
 
 // ArtifactMeta is what artifact.json records beside every unpacked tree. The
 // ticket server's repo_facts reads it through the current symlink on every
 // call (phase 3 wiring), so the facts swap atomically with the content.
 type ArtifactMeta struct {
-	URL      string `json:"url"`
-	Revision string `json:"revision,omitempty"`
-	Digest   string `json:"digest"`
-	Produced string `json:"produced,omitempty"`
-	Unpacked string `json:"unpacked"`
-	Source   string `json:"source,omitempty"`
+	URL            string `json:"url"`
+	Revision       string `json:"revision,omitempty"`
+	Digest         string `json:"digest"`
+	Produced       string `json:"produced,omitempty"`
+	Unpacked       string `json:"unpacked"`
+	OriginRevision string `json:"origin_revision,omitempty"`
+	Source         string `json:"source,omitempty"`
 }
 
 // FetchAndSwap is the whole sidecar in one call: download the tarball at url,
@@ -146,12 +148,13 @@ func unpack(ctx context.Context, url, dgst, dir string, o CoreOpts) error {
 		return err
 	}
 	meta := ArtifactMeta{
-		URL:      url,
-		Revision: o.Revision,
-		Digest:   dgst,
-		Produced: o.Produced,
-		Unpacked: o.Now().UTC().Format(time.RFC3339),
-		Source:   o.Source,
+		URL:            url,
+		Revision:       o.Revision,
+		Digest:         dgst,
+		Produced:       o.Produced,
+		Unpacked:       o.Now().UTC().Format(time.RFC3339),
+		OriginRevision: o.OriginRevision,
+		Source:         o.Source,
 	}
 	b, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {

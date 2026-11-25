@@ -12,7 +12,8 @@
 //	       pod mode: read the one ExternalArtifact this sidecar is allowed to
 //	       read (namespaced Role: get, watch) at startup — which covers a
 //	       missed event after a restart — then watch it and repeat the core
-//	       on every artifact change, re-checking every --resync.
+//	       on every artifact change, re-checking every --resync. An artifact
+//	       that does not exist yet is waited for, not fatal (T-0037 4b).
 package main
 
 import (
@@ -49,8 +50,7 @@ func main() {
 		url := fs.String("url", "", "artifact URL (required)")
 		dgst := fs.String("digest", "", "artifact digest, sha256:<hex> (required)")
 		root := fs.String("root", "", "volume root for revisions/ and current (required)")
-		o := coreFlags(fs)
-		fs.Parse(os.Args[2:])
+		o := coreFlags(fs, os.Args[2:])
 		must(*url != "", "--url is required")
 		must(*dgst != "", "--digest is required")
 		must(*root != "", "--root is required")
@@ -65,8 +65,7 @@ func main() {
 		name := fs.String("name", "", "name of the one ExternalArtifact (required)")
 		root := fs.String("root", "", "volume root for revisions/ and current (required)")
 		resync := fs.Duration("resync", defaultResync, "re-read the ExternalArtifact this often as a fallback")
-		o := coreFlags(fs)
-		fs.Parse(os.Args[2:])
+		o := coreFlags(fs, os.Args[2:])
 		must(*ns != "", "--namespace is required")
 		must(*name != "", "--name is required")
 		must(*root != "", "--root is required")
@@ -82,12 +81,21 @@ func main() {
 	}
 }
 
-func coreFlags(fs *flag.FlagSet) CoreOpts {
+// coreFlags registers the tunables shared by both modes, parses args, and only
+// then reads the values into CoreOpts. Reading them before Parse made every
+// tunable a silent no-op (Fable's review, T-0037 phase 4b); the regression
+// test in main_test.go keeps that order locked.
+func coreFlags(fs *flag.FlagSet, args []string) CoreOpts {
+	retries := fs.Int("retries", defaultRetries, "download retries")
+	keep := fs.Int("keep", defaultKeep, "revision dirs to keep")
+	maxDownloadSz := fs.Int("max-download-bytes", defaultMaxDownloadSz, "tarball size cap")
+	maxUntarSz := fs.Int("max-untar-bytes", defaultMaxUntarSz, "unpacked size cap")
+	fs.Parse(args)
 	return CoreOpts{
-		Retries:       *fs.Int("retries", defaultRetries, "download retries"),
-		Keep:          *fs.Int("keep", defaultKeep, "revision dirs to keep"),
-		MaxDownloadSz: *fs.Int("max-download-bytes", defaultMaxDownloadSz, "tarball size cap"),
-		MaxUntarSz:    *fs.Int("max-untar-bytes", defaultMaxUntarSz, "unpacked size cap"),
+		Retries:       *retries,
+		Keep:          *keep,
+		MaxDownloadSz: *maxDownloadSz,
+		MaxUntarSz:    *maxUntarSz,
 	}
 }
 
