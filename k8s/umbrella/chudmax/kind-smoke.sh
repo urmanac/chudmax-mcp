@@ -82,8 +82,9 @@ pbuild "$SERVER_IMAGE" "$REPO/k8s/tickets-mcp/Dockerfile" "$REPO/k8s/tickets-mcp
 for img in "$WEB_IMAGE" "$FETCHER_IMAGE" "$SERVER_IMAGE"; do
   tar="$WORK/$(printf '%s' "$img" | tr '/:' '__').tar"
   podman save --format docker-archive -o "$tar" "$img"
+  docker load -i "$tar" >/dev/null
   kind load image-archive "$tar" --name "$CLUSTER"
-  echo "  loaded: $img"
+  echo "  loaded: $img (host docker + kind node)"
 done
 
 say "4. the mock engine OUTSIDE kind, on the docker bridge"
