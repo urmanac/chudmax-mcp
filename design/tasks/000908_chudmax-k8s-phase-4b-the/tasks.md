@@ -4,8 +4,8 @@
 
 **Setup + contract verification**
 
-- [ ] Branch `feat/tickets-mcp-mock` off public `main` (`67d8616`); conventional commits; the box untouched
-- [ ] Re-verify the canonical, code-only: read `kingdonb/chudmax` `tools/mcp/ticket_mcp.py` + `tools/mcp/selftest.py` at `main` (GitLab API or shallow clone — token never echoed, never data files); confirm findings 1+2 (`Path(a.tickets).resolve()` at startup, `--revision` static) and the seven-tool surface; if the head moved past `de442410`, diff and adjust (`verified-here` label on the receipt)
+- [x] Branch off public `main` — **done: `feature/000908-chudmax-k8s-phase-4b`** (the Helix task branch; the harness's naming), created off the CURRENT `main` — **phase 4 merged while planning: `main` = `4a414d7`** (repo-sync manifests + flux-schema workflow landed); `origin/main` merged in, `mergeable` — conventional commits; the box untouched
+- [x] Re-verify the canonical, code-only — **done (`verified-here`, 2026-11-25, twice during planning):** `kingdonb/chudmax` `main` head = `de442410` (API commit check at implementation start); `tools/mcp/ticket_mcp.py` blob `5e3d09ca` + `tools/mcp/selftest.py` blob `9bb6b883` read in full; findings 1+2 confirmed (L440 `Tickets(Path(a.tickets).resolve(), revision=a.revision, …)` — symlink resolved once, revision static); seven-tool surface confirmed; no head movement — no adjustment needed
 
 **Private MR (canonical fix — GitLab API; the human merges there)**
 
