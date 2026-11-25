@@ -52,6 +52,14 @@ release's**: the fetcher's Role and the generated ExternalArtifact are
 namespaced to it, and the ArtifactGenerator creates the artifact in its own
 namespace.
 
+One manifest needs a per-install edit: [`artifact-ingress.yaml`](artifact-ingress.yaml)
+admits the chart's pods to source-watcher's storage port (:9090) — **required
+whenever the cluster runs Flux's shipped NetworkPolicies** (`flux install
+--network-policy`, on by default: they deny cross-namespace ingress to
+:9090). Replace its `chudmax-releases` placeholder with your release's
+namespace before applying. Without it the fetcher waits forever with the
+policies on; with `--network-policy=false` it is not needed.
+
 ## The two phase-4 answers
 
 **1. The copy rules fit the narrowed-artifact idea — they are the primary

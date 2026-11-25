@@ -1,0 +1,12 @@
+# The phase-5 rehearsal's throwaway single-node kind cluster. The node image is
+# kind v0.33.0's default (pinned transitively by the kind binary pin — a
+# hand-written sha256 here would be a guess, not a receipt). kindnet (the
+# default CNI) enforces NetworkPolicies since kind v0.24, so the denial proof
+# is non-vacuous on it too; the rehearsal installs CILIUM for Cozystack parity
+# and CiliumNetworkPolicy coverage (the chart's auto mode resolves to the CNP
+# on this cluster, and the kube-apiserver reserved-entity rule is Cilium-only).
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+name: phase5-rehearsal
+nodes:
+  - role: control-plane

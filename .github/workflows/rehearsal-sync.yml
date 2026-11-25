@@ -1,0 +1,73 @@
+# The phase-5 rehearsal in CI (T-0037): throwaway kind cluster + Cilium + Flux
+# (source-watcher), the REAL chart (default values), the Smart-HTTP test repo
+# on the runner, and the card's proofs — commit -> list_tickets with nobody
+# doing anything (four commits incl. the retention and the post-upgrade
+# delivery), and the denials (RBAC 403 + the NetworkPolicy denial) with
+# positive controls. This workflow is the authoritative run; the local sandbox
+# run is best-effort (podman kind).
+#
+# This file is phase 5's only workflow edit surface: phase 6 owns umbrella.yml
+# and the engine/web-chart/umbrella dirs — nothing shared, helpers duplicated
+# in k8s/rehearsal/.
+#
+# No secrets: the test repo is served by the runner itself; nothing is pushed
+# to any remote (contents: read only).
+
+name: rehearsal-sync
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'k8s/**'
+  push:
+    branches: [main]
+    paths:
+      - 'k8s/**'
+
+permissions:
+  contents: read
+
+jobs:
+  rehearsal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: install kind (pinned release binary)
+        run: |
+          curl -fsSL -o kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          kind version
+      - name: install the flux CLI (pinned, with the schema plugin for receipts)
+        uses: fluxcd/flux2/action@v2.10.1
+        with:
+          plugins: |
+            schema
+      - name: install the cilium CLI (pinned)
+        run: |
+          curl -fsSL -o /tmp/cilium.tgz \
+            https://github.com/cilium/cilium-cli/releases/download/v0.18.7/cilium-linux-amd64.tar.gz
+          tar -xzf /tmp/cilium.tgz -C /tmp cilium
+          sudo mv /tmp/cilium /usr/local/bin/cilium
+          cilium version --client
+      - name: run the rehearsal
+        run: |
+          bash -n k8s/rehearsal/rehearse.sh
+          bash k8s/rehearsal/rehearse.sh
+      - name: the receipts (always — the step summary carries the record)
+        if: always()
+        run: test -f /tmp/rehearsal-summary.txt && cat /tmp/rehearsal-summary.txt >> "$GITHUB_STEP_SUMMARY" || true
+      - name: upload the failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rehearsal-logs
+          path: /tmp/rehearsal-logs

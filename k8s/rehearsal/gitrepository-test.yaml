@@ -1,0 +1,21 @@
+# The phase-5 rehearsal's GitRepository — the test variant of
+# k8s/repo-sync/gitrepository.yaml. Two deltas vs production, both deliberate
+# and documented in k8s/rehearsal/README.md:
+#   1. spec.url is RENDERED by rehearse.sh (the __RUNNER_HTTP__ placeholder is
+#      substituted with <runner-gateway>:<port> — the test repo lives on the CI
+#      runner, served over Smart HTTP; git:// is NOT an option: the
+#      GitRepository CRD's ^(http|https|ssh):// pattern rejects it at the API
+#      server);
+#   2. NO spec.secretRef — the runner's Smart-HTTP server is unauthenticated;
+#      production carries chudmax-repo-auth.
+# Everything else (branch main, interval 1m, no spec.ignore) is the production
+# shape.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: chudmax-source
+spec:
+  interval: 1m
+  url: http://__RUNNER_HTTP__/repo.git
+  ref:
+    branch: main
