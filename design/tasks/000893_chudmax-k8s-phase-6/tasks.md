@@ -1,13 +1,13 @@
 # Implementation Tasks: chudmax k8s phase 6 engine and web charts with umbrella
 
 **Setup and parallel-safety (hard boundaries)**
-- [~] Check `helix-specs design/tasks/000903_chudmax-k8s-phase-5-sync` (phase 5's spec) at implementation start; adopt-by-copy any kind scaffolding into phase-6's own files — never depend on, edit, or push to phase 5's branch
+- [x] Check `helix-specs design/tasks/000903_chudmax-k8s-phase-5-sync` (phase 5's spec) at implementation start; adopt-by-copy any kind scaffolding into phase-6's own files — never depend on, edit, or push to phase 5's branch
 - [~] Coordinate with phase 5's `apiServer.mode: auto` change (CiliumNetworkPolicy gated on `.Capabilities.APIVersions.Has "cilium.io/v2/CiliumNetworkPolicy"`): rebase the feature branch onto `main` before the final CI run so the `file://` mcp dep carries it; verify the umbrella renders and installs cleanly with the mcp chart's defaults on stock kind — the rendered set contains **no Cilium CRDs** (kubeconform's default k8s schemas are the tripwire)
-- [~] Branch off current `main`; touch ONLY `k8s/umbrella/**` and `.github/workflows/umbrella-kind.yml` (+ this task dir on helix-specs) — NO edits to `k8s/chart/chudmax-mcp/`, `k8s/rehearsal/`, or the root README while phase 5 is active
-- [~] Verify the Strata receipt on the pin used: clone `kingdonb/Strata` at the SHA recorded in the pins table; confirm `--engine mock` default, `/health` + `/mcp` + `/v1/chat/completions`, the Host guard + `STRATA_ALLOWED_HOSTS`, wheel-only runtime requirements (`verified-here` in the task docs)
+- [x] Branch off current `main`; touch ONLY `k8s/umbrella/**` and `.github/workflows/umbrella-kind.yml` (+ this task dir on helix-specs) — NO edits to `k8s/chart/chudmax-mcp/`, `k8s/rehearsal/`, or the root README while phase 5 is active
+- [x] Verify the Strata receipt on the pin used: clone `kingdonb/Strata` at the SHA recorded in the pins table; confirm `--engine mock` default, `/health` + `/mcp` + `/v1/chat/completions`, the Host guard + `STRATA_ALLOWED_HOSTS`, wheel-only runtime requirements (`verified-here` in the task docs)
 
 **Engine subchart (`k8s/umbrella/chudmax/subcharts/chudmax-engine/`)**
-- [ ] Chart.yaml (v2, `chudmax-engine`, 0.1.0); values.yaml — `endpoint.host` default **empty** (values comment: "set this to your engine's address"; NOTES repeats it), `endpoint.port` 8080, `test.enabled` default true
+- [~] Chart.yaml (v2, name `chudmax-engine`, version 0.1.0); values.yaml — `endpoint.host` default **empty** (values comment: "set this to your engine's address"; NOTES repeats it), `endpoint.port` 8080, `test.enabled` default true
 - [ ] Templates: selectorless Service — port **8080**, `targetPort: http` (named); EndpointSlice (`discovery.k8s.io/v1`, `addressType: IPv4`, `kubernetes.io/service-name` label; port **name `http`**, port `endpoint.port` — decoupled from the Service port) rendered only when `endpoint.host` is set; Helm test hook (`curlimages/curl` pinned, curls `/health` through the Service, fail-fast); `_helpers.tpl`; NOTES.txt; README.md (stable-in-cluster-name note, installer values table, legacy-Endpoints alternative, no-workload-by-design)
 - [ ] Local proof: `helm lint` + `helm template` ×2 (defaults = Service-only; variant `--set engine.endpoint.host=203.0.113.10`) + kubeconform on rendered — `verified-here`
 
