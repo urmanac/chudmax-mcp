@@ -64,9 +64,21 @@ git -C "$WORK/strata" checkout -q FETCH_HEAD
 echo "  checked out: $(git -C "$WORK/strata" rev-parse HEAD)"
 
 say "3. images: podman build → podman save → kind load image-archive (no registry)"
-podman build -q -t "$WEB_IMAGE" -f "$HERE/web-image/Dockerfile" "$WORK/strata"
-podman build -q -t "$FETCHER_IMAGE" -f "$REPO/k8s/image/Dockerfile" "$REPO/k8s"
-podman build -q -t "$SERVER_IMAGE" -f "$REPO/k8s/tickets-mcp/Dockerfile" "$REPO/k8s/tickets-mcp"
+# A retry for the registry transient this repo's CI has hit before (the phase-3
+# precedent): parallel jobs pull base images from the same shared anonymous
+# buckets, and a pull can fail transiently (podman exits 125).
+pbuild() {
+  local tag="$1" file="$2" ctx="$3" attempt
+  for attempt in 1 2 3; do
+    if podman build -q -t "$tag" -f "$file" "$ctx"; then return 0; fi
+    echo "  build of $tag failed (attempt $attempt) - retrying after a pause"
+    sleep $((attempt * 20))
+  done
+  die "the build of $tag failed three times (see the podman output above)"
+}
+pbuild "$WEB_IMAGE" "$HERE/web-image/Dockerfile" "$WORK/strata"
+pbuild "$FETCHER_IMAGE" "$REPO/k8s/image/Dockerfile" "$REPO/k8s"
+pbuild "$SERVER_IMAGE" "$REPO/k8s/tickets-mcp/Dockerfile" "$REPO/k8s/tickets-mcp"
 for img in "$WEB_IMAGE" "$FETCHER_IMAGE" "$SERVER_IMAGE"; do
   tar="$WORK/$(printf '%s' "$img" | tr '/:' '__').tar"
   podman save --format docker-archive -o "$tar" "$img"
