@@ -1,0 +1,28 @@
+# The phase-4 CI re-proof: the repo-sync manifests validate against the Flux
+# schemas (strict JSON-Schema + CEL) with flux-schema, the Flux CLI plugin.
+# No cluster — that is the phase-5 kind rehearsal's job.
+#
+# Schema drift is caught in PRs, not on a cluster after Flux reconciles it.
+
+name: repo-sync-validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  flux-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Flux CLI with the schema plugin
+        uses: fluxcd/flux2/action@v2.10.1
+        with:
+          plugins: |
+            schema
+      - name: Validate repo-sync manifests against the Flux schemas
+        run: flux schema validate k8s/repo-sync --schema-location default -v
