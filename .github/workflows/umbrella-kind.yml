@@ -47,8 +47,8 @@ jobs:
         run: |
           helm template rel k8s/umbrella/chudmax > /tmp/umb-defaults.yaml
           helm template rel k8s/umbrella/chudmax --set engine.endpoint.host=203.0.113.10 > /tmp/umb-endpoint.yaml
-          ! grep -qi cilium /tmp/umb-defaults.yaml
-          ! grep -qi cilium /tmp/umb-endpoint.yaml
+          ! grep -qEi 'kind: *CiliumNetworkPolicy|apiVersion: *cilium\.io/' /tmp/umb-defaults.yaml
+          ! grep -qEi 'kind: *CiliumNetworkPolicy|apiVersion: *cilium\.io/' /tmp/umb-endpoint.yaml
           /tmp/kubeconform -strict -summary /tmp/umb-defaults.yaml
           /tmp/kubeconform -strict -summary /tmp/umb-endpoint.yaml
       - name: template + kubeconform (the subcharts' own variants)

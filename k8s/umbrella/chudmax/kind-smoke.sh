@@ -198,8 +198,13 @@ say "6. helm install (chart defaults + the engine endpoint)"
 rm -rf "$CHART/charts"
 helm dependency build "$CHART" >/dev/null
 helm template "$CLUSTER-defaults" "$CHART" > "$WORK/rendered.yaml"
-if grep -qi cilium "$WORK/rendered.yaml"; then die "Cilium CRDs rendered with the chart defaults on stock kind (phase 5's auto gate broken?)"; fi
-echo "  no Cilium CRDs in the defaults render ✓"
+# Assert the CRD SHAPE, not the word: the read-only mcp chart's egress template
+# carries "Cilium" inside its explanatory YAML comments (raw comments render
+# verbatim), which a bare grep counts as a hit.
+if grep -qEi 'kind: *CiliumNetworkPolicy|apiVersion: *cilium\.io/' "$WORK/rendered.yaml"; then
+  die "a CiliumNetworkPolicy object rendered with the chart defaults on stock kind (the auto gate broken?)"
+fi
+echo "  no Cilium objects in the defaults render ✓ (plain NetworkPolicies only)"
 helm upgrade --install chudmax "$CHART" -n "$NS" --create-namespace \
   --set engine.endpoint.host="$ENGINE_HOST" >/dev/null
 
