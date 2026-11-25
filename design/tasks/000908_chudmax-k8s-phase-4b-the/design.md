@@ -2,68 +2,90 @@
 
 > **Public mirror** — the full-fidelity record (including deployment specifics) lives in the private source-of-truth repo.
 
-The mock is a fresh public-safe implementation of the canonical tickets-mcp's signatures (`kingdonb/chudmax` `tools/mcp/ticket_mcp.py` + `tools/mcp/selftest.py`, both read in full 2026-11-25 from `main` @ `de442410` — blobs `5e3d09ca` and `9bb6b883`): same protocol, same seven tools, its own data. Per the steering brief: **not a copy** — the private code is reference-only; the mock is written from the recorded contract with its own structure and wording, and nothing private (code text or data) lands in the public repo. Single file, Python 3 stdlib only, zero dependencies, under `k8s/tickets-mcp-mock/`.
+Scope after the major steering update (Fable's review, Kingdon's fix-before-phase-5): **one contract fixed in both places** — the canonical server (private MR) and the mock (public PR) both move to per-call reads through `current` with `repo_facts` facts from `artifact.json` read per call — plus chart hardening (F3–F6), the mock becoming the chart's default server, fetcher fixes, and CI kubeconform. Sequence: **the canonical fix defines the contract; the mock mirrors it.**
 
-## The canonical surface (recorded, reproduced exactly)
-
-Seven read-only tools — names, order, inputSchemas and descriptions reproduced as-is (they contain no private material):
-
-| tool | params | returns |
-|---|---|---|
-| `list_tickets` | — | one line per ticket: id, status (12-wide), priority (6-wide), title |
-| `get_ticket` | `id` (required), `max_chars` (description: "default 3000") | one ticket, trimmed from the MIDDLE (head 40% / tail 60%, cut at line breaks, omission note between) |
-| `search_tickets` | `query` (required) | matching ids + one-line snippets (first matching line, ~160 chars) |
-| `repo_facts` | — | revision/checkout facts + ticket counts by status |
-| `list_docs` | — | readable files: one line each (rel path, size, first `#` heading ≤70 chars) |
-| `read_doc` | `name` (required), `max_chars` (description: "default 1500") | one doc, truncated from the END (docs read top-down) |
-| `search_docs` | `query` (required), `max_hits` (default 12) | `file:line` matches (~140 chars each), capped with a note |
-
-One `handle()` dispatch behind both transports:
-
-- `initialize` → protocolVersion `2024-11-05`, `capabilities.tools.listChanged: false`, serverInfo, instructions ("nothing here can change a ticket's status; only a commit can").
-- `tools/list` **and** `resources/list` both answer `{"tools": [...]}` (canonical quirk — part of the observable signature).
-- `tools/call` → `{"content":[{"type":"text","text":…}]}`; unknown tool → same shape with `isError: true`; a raised exception becomes `error: <type>: <msg>` text (never kills the pipe).
-- Unknown method → JSON-RPC error `-32601`.
-- **stdio:** one JSON object per line; blank and unparsable lines skipped with no reply; replies one object per line, flushed.
-- **HTTP (`--http PORT [--host ADDR]`, PORT 0 = OS picks):** `ThreadingHTTPServer`, HTTP/1.1, always `Content-Length`. POST (handled on any path; `/mcp` is the documented one): try the first line as JSON, else the whole body; must be an object. Malformed → **400** `{"error":{"code":-32700,…}}`. Object without `id` (notification) → **202, empty body**. Else → **200**, one JSON object + trailing newline. GET (any path) → **405**, `Allow: POST`, small text hint. Startup prints exactly `listening on <host>:<port>` (the selftests parse it).
-
-**What the canonical selftest locks (the behavioral fingerprints worth reproducing):** `serverInfo.name == "chudmax-tickets"`; tools/list = exactly seven; repo_facts pod mode reports the handed revision + `no git was asked` + `artifact unpacked:`; the trim note regex `\n[... ...]\n?` with `max_chars=<len> returns all`; a trimmed ticket keeps its title line and its last line; each tool's actual default cap matches the `default N` its schema description advertises (the description is load-bearing — keep it verbatim); malformed POST → 400; notification → 202 + `read() == b""`; GET → 405.
-
-## Mock vs canonical (the deltas)
-
-1. **Data = the mock fixture** (`fixture/`): a synthetic `tickets.md` in the canonical grammar (the mock parses with the same regex grammar: `## T-XXXX - Title`, `**Status/Owner/Priority/Due/Tags/Depends on/Coordination:**`, `**Purpose:**`, diary blocks), a mock `STATE.md`, a couple of mock `docs/` and `decisions/` records, and a small `README.md` — enough to exercise every tool honestly. All content invented; no original tickets, no real names/hosts/tokens. The canonical's readable set (README.md, AGENTS.md, tickets.md, docs/, decisions/, plans/) applies unchanged — fixture files not in the set are simply not listed.
-2. **Pod mode reads artifact.json per call.** `--data-root <root>` switches the whole store to `<root>/current/` reread on EVERY call (the volume contract): tickets/docs parse from the unpacked tree; `repo_facts` reads `<root>/current/artifact.json` fresh and reports its six fields (url, revision, digest, produced, unpacked, source). Missing/unparsable artifact.json → `repo_facts` says so honestly and still serves what it can. The canonical's phase-1 flags (`--revision/--artifact-produced/--artifact-unpacked`) stay accepted for CLI parity (the canonical selftest's pod-mode shape uses them); `--data-root` wins when both are given.
-3. **serverInfo name mirrored verbatim** (`chudmax-tickets`) — resolved by evidence: the canonical's own selftest asserts it, and phase 5's canary may reuse those checks. The mock marks itself where it does not affect signatures: its dir README, the fixture content, and the image labels/description.
-4. **CLI:** `--tickets PATH` (default: bundled fixture), `--http PORT`, `--host`, `--data-root`, plus the canonical's revision flags for parity.
-
-## Repo layout
+## The per-call contract (the central constraint)
 
 ```
-k8s/tickets-mcp-mock/
-  ticket_mcp_mock.py     the server — fresh single-file stdlib implementation
-  fixture/               tickets.md, STATE.md, README.md, docs/, decisions/ (mock records)
-  test_tickets_mcp_mock.py  subprocess-based suite, canonical selftest style (keyed results)
-  Dockerfile             python:3.12-alpine, COPY-only, non-root, stdio default entrypoint
-  README.md              what it is / what it is not (no real data; canonical stays private)
-k8s/chart/chudmax-mcp/README.md   NEW (docs-only): the optional-server example values → mock image
-README.md, .github/workflows/image-chart.yml     pointer + CI edits
+Broken today (canonical, verified at de442410):
+  main(): store = Tickets(Path(a.tickets).resolve(), revision=a.revision, …)   # L440
+  - .resolve() follows current -> revisions/<hex> ONCE at startup
+  - after a fetcher swap: current points at a NEW hex; the server still reads the OLD dir
+  - retention (keep 3) deletes the old dir -> reads die; repo_facts still reports launch-time flags
+
+Fixed contract (what every doc already promised — k8s/fetcher/README.md, chart values comments):
+  - files open through <root>/current on EVERY call (open the path WITH the symlink, never resolved)
+  - repo_facts reads <root>/current/artifact.json on every call
+  - no restarts; retention pruning an old revision is invisible to a serving reader
 ```
 
-## Key decisions
+**Private MR (canonical fix)** — `tools/mcp/ticket_mcp.py`: add `--data-root DIR` pod mode (per-call rereads of `DIR/current/tickets.md` + docs + `DIR/current/artifact.json`; facts from artifact.json); the resolve-at-startup is replaced by per-call opens; the old flags stay accepted (`--tickets <plain file>`, `--revision/--artifact-produced/--artifact-unpacked`) and are documented as fallbacks/overrides for a no-fetcher setup. `tools/mcp/selftest.py` stays green (the flags path is untouched) and gains a fixture-root per-call check (build revisions/ + current + artifact.json, swap, assert new facts). Same MR, docs: `kubernetes/repo-sync.md` — the narrowed artifact is served by **source-watcher's storage** (`--storage-addr`, default :9090), not source-controller (the public phase-4 README already states this correctly — the plan doc is the wrong one); the phase-5 evaluation text drops the stale "privileged runner" flag; one STATE/tickets line notes the fetcher's home is `urmanac/chudmax-mcp` (the private `k8s/fetcher` copy is frozen history — no drift management).
 
-1. **Fresh implementation against a recorded contract.** "Signature-compatible" is enforced by the recorded surface (the table above) and by the mock's own suite asserting the same fingerprints the canonical selftest asserts. The private code is reference-only — own structure, own comments, no copied text; the implementing session re-verifies the canonical files' heads before merging (cheap provider-API read; if the head moved past `de442410`, diff and adjust).
-2. **Fixture ships inside the image** at a fixed path; standalone mode (no `--data-root`) always works — the image is demoable with `podman run -i --rm <image>` alone. In pod mode the volume is the only data source; until the first artifact swap the tree is absent and the tools answer honestly (no tickets, artifact facts missing).
-3. **Pod mode = per-call rereads through `current`** — matches the fetcher README's `repo_facts` contract and the chart's shared-volume mount; a test swaps the symlink mid-run to prove facts swap with content, no restart.
-4. **Dockerfile: `python:3.12-alpine`, COPY-only, numeric non-root USER.** No RUN → no emulation in the manifest build (the multi-arch base carries the arch difference; the fetcher image's cross-compile pin is unnecessary here). Build: `podman build --platform linux/amd64,linux/arm64 --manifest localhost/chudmax-tickets-mock:0.1.0 -f k8s/tickets-mcp-mock/Dockerfile k8s/tickets-mcp-mock`.
-5. **Example values live in a new chart README** (`k8s/chart/chudmax-mcp/README.md` — the chart dir has none today; docs-only, `helm lint`/`template` provably unaffected). CI templates the example via `--set` flags (the phase-3-proven pattern) rather than a separate values file. No `values.yaml` changes — the default install stays fetcher-only (phase-3 boundary).
-6. **CI extends `image-chart.yml`** (existing jobs untouched): a Python test job (`setup-python@v5`, pinned 3.12, runs the mock suite); a `mock-image` job (both-arches manifest build, arch-count check, HTTP smoke: initialize → 200, notification → 202, GET → 405, malformed → 400); one more chart-job template step with the mock example values. No registry push anywhere.
-7. **Public-safe by construction.** A hygiene test scans the fixture + server for a denylist (LAN-shaped addresses, token-ish strings, real hostnames — none present); the chart README references only the unpublished ghcr tag and local build commands; no LAN addresses, credential names, or proxy hostnames anywhere in the diff.
+**Public mock** implements the same contract from day one (below); its suite carries this card's per-call proof.
+
+## The mock (public)
+
+Fresh single-file Python 3 stdlib implementation at `k8s/tickets-mcp-mock/ticket_mcp_mock.py` — **not a copy** of the canonical (the private source is code-only reference; no copied text; no data files). Signatures and behavioral fingerprints reproduced exactly:
+
+- Seven tools, verbatim inputSchemas (incl. `default N` max_chars descriptions — load-bearing: the canonical selftest cross-checks advertised vs actual caps): `list_tickets`; `get_ticket(id, max_chars=3000)` middle-trim 40/60 line-aligned with omission note + `max_chars=<len> returns all`; `search_tickets(query)`; `repo_facts()`; `list_docs()`; `read_doc(name, max_chars=1500)` end-trim, resolve-based readable-set enforcement (README.md, AGENTS.md, tickets.md, docs/, decisions/, plans/); `search_docs(query, max_hits=12)`.
+- `initialize` → `protocolVersion: 2024-11-05`, `capabilities.tools.listChanged: false`, `serverInfo.name: "chudmax-tickets"` (the canonical selftest asserts it), instructions. `tools/list` AND `resources/list` both answer the tools. `tools/call` → text content; unknown tool → `isError: true`; exceptions → `error: …` text; unknown method → `-32601`; notifications get no stdio reply.
+- stdio: one JSON object per line; blank/unparsable lines skipped silently. HTTP: `--http PORT` (0 = OS picks), ThreadingHTTPServer, HTTP/1.1, Content-Length always; POST (any path; `/mcp` documented) → first-line-then-whole-body JSON parse; malformed → **400** `-32700`; no `id` → **202, empty body**; else **200** one object + newline; GET → **405** `Allow: POST`; startup prints `listening on <host>:<port>`.
+- **Fixed contract built in:** `--data-root <root>` → per-call rereads of `<root>/current/` (tickets, docs) and `<root>/current/artifact.json` for `repo_facts` — it reports url, revision, digest, produced, unpacked, source (+ `origin_revision` when the fetcher recorded it) + tickets by status; honest answers when absent. Legacy flags accepted as fallbacks/overrides; `--data-root` wins.
+- **Bearer-token option** (mcp.md specifies it; phase 1 didn't; the mock implements it as a values-driven option, default off): `--bearer-token-file PATH` — HTTP only (stdio is a local pipe); the file is read PER REQUEST (rotation without restart — same per-call spirit); `Authorization: Bearer <token>` required on POST once enabled; missing/wrong/unreadable-file → **401** (fail-closed); 202/405/400 semantics unaffected otherwise.
+- CLI: `--tickets PATH` (default: bundled fixture), `--http PORT`, `--host`, `--data-root`, `--bearer-token-file`, legacy revision flags.
+
+**Fixture** (`fixture/`, ships inside the image): synthetic `tickets.md` (canonical grammar — `## T-XXXX - Title`, `**Status/Owner/Priority/Due/Tags/Depends on/Coordination:**`, `**Purpose:**`, diary blocks; a few tickets across done/in-progress/open/blocked/wont-do, one long enough to trim), mock `STATE.md`, a couple of mock `docs/` + `decisions/` records, small `README.md`. All invented; zero original tickets; no LAN addresses/credential names/proxy hostnames (hygiene test asserts a denylist).
+
+**Test suite** (`test_tickets_mcp_mock.py`, canonical selftest style — real subprocess, keyed-by-call results): all seven tools over both transports; 202-empty/405/400; trim fingerprints + advertised-default cross-check; per-call proof (fixture root v1 → swap to v2 without restart → prune v1 → still answers); bearer-token option (401 without/with wrong token, pass with right token, rotation); hygiene denylist.
+
+**Dockerfile:** `python:3.12-alpine`, COPY-only (no RUN → no emulation in the manifest build), numeric non-root USER, stdio-over-fixture default entrypoint. Build: `podman build --platform linux/amd64,linux/arm64 --manifest localhost/chudmax-tickets-mock:0.1.0 -f k8s/tickets-mcp-mock/Dockerfile k8s/tickets-mcp-mock`.
+
+## Chart hardening (public, same PR)
+
+- **F3:** pod-level `automountServiceAccountToken: false` (the values knob moves from `server.automountServiceAccountToken` to pod level — pre-release rename, flagged in the PR); the invalid container-level field is deleted; the FETCHER container mounts a **projected volume**: `serviceAccountToken` (`path: token`, `expirationSeconds: ~3600` — short-lived, kubelet-refreshed) + the `kube-root-ca.crt` ConfigMap source (`ca.crt`) so `rest.InClusterConfig` keeps finding token + CA at `/var/run/secrets/kubernetes.io/serviceaccount`; only the fetcher mounts it. The BYO server gets no token unless the user adds one.
+- **F4:** `networkPolicy.egress.sourceController.port` default 80 → **9090** (source-watcher's storage serves the generated artifact); the rule gains a **podSelector** (the serving controller's pods) alongside the namespace knob — pods of the controller, not the whole namespace.
+- **F5:** apiserver egress rule defaults to the **Cilium-compatible podSelector** (apiserver static pods: namespace `kube-system` + `component: kube-apiserver` — Cilium matches policy on the resolved backend); the `ipBlock` on the service CIDR stays as a values alternative (`apiServer.mode: podSelector|cidr`, default podSelector); both documented in values comments + chart README.
+- **Deviation (owner):** the mock is part of the install — `server.enabled: true` default; `server.image` defaults `ghcr.io/urmanac/chudmax/tickets-mock:0.1.0`; working default `command`/`args` (`python3 /app/ticket_mcp_mock.py`, `--http 8080 --data-root /data`); `server.port: 8080` unchanged. Fetcher image default renamed `ghcr.io/urmanac/chudmax/fetcher:0.1.0` (the `chudmax/mcp` name was confusing). BYO = override `server.*` values. README + NOTES.txt rewritten accordingly; `values.yaml` comments updated (naming, defaults, the auth option).
+- **Auth option (values-driven):** `server.auth: {enabled: false, secretName: "", secretKey: "token"}` — when enabled, the chart mounts the Secret (readOnly, `/var/run/mcp-auth`) and appends `--bearer-token-file /var/run/mcp-auth/<key>`; the mock validates per request. Token VALUES never enter values — only the Secret's name.
+- **Image hygiene:** pod-level securityContext (`runAsNonRoot: true`, `seccompProfile: RuntimeDefault`); both containers get `allowPrivilegeEscalation: false` + `capabilities.drop: [ALL]` (both images run uid 65532 — non-root holds). The fetcher image's alpine:3.21 bases bump to 3.22 (EOL); the CI smoke's alpine:3.21 helper likewise.
+- **Kinder startup (NOTES.txt):** the fetcher no longer crash-loops pre-artifact — startup-Get NotFound retries with backoff and stays up; the chart README/NOTES say "waiting for the ExternalArtifact" instead of "exits and restarts".
+- **Probes/interface:** unchanged (fetcher exec readiness on `/data/current`; no server probes — the default install's mock reads the volume; Service + ingress NetworkPolicy now render by default).
+
+## Fetcher fixes (public, same PR)
+
+- **F6:** `coreFlags(fs)` builds CoreOpts from pointers dereferenced BEFORE `fs.Parse` — assign after Parse (capture the pointers, parse, then fill the struct). Regression test: parse real flags (`--retries 5 --keep 2 --max-download-bytes … --max-untar-bytes …`) and assert the values reach CoreOpts.
+- **Kinder startup:** in `watch.go`, the startup `Get` returns its error → `exitOn` → log.Fatal. Fix: on `apierrors.IsNotFound` retry with backoff (the resync period is the natural unit) and stay up; any other error still exits loudly. A fake-client test covers the NotFound-then-success path.
+- **Origin revision → artifact.json:** watch mode already holds the ExternalArtifact object; read `ea.Status.Artifact.Metadata["org.opencontainers.image.revision"]` (verified: that is where the ArtifactGenerator writes it — `setArtifactRevisions` in source-watcher's controller; readable with the existing get/watch RBAC; for GitRepository sources the value is the revision string `main@sha1:<sha>` via the generator's fallback, so the git commit stays visible) and thread it through CoreOpts → `ArtifactMeta` gains `OriginRevision string \`json:"origin_revision,omitempty"\`` (fetch/one-shot mode has no object → omitted). `k8s/fetcher/README.md`'s contract section documents the field. Unit test: artifact.json contains `origin_revision` when set, absent when not.
+
+## CI (public, image-chart.yml extended)
+
+- **kubeconform** (with default k8s schemas + Flux CRD schemas) on the RENDERED chart in both value variants (mock-enabled defaults; fetcher-only) — the check that would have caught F3. Mechanics: `helm template … | kubeconform` with the Flux schemas supplied (CRD fetch or the phase-4 `flux-schema` precedent as fallback if the runner fights kubeconform's CRD handling).
+- Python job: the mock suite (setup-python pinned 3.12). `mock-image` job: both-arches manifest build, arch-count verification, HTTP smoke (initialize 200 / notification 202 / GET 405 / malformed 400). Chart job: template the two variants. Go jobs: fetcher vet/test (gains the new regression tests) + both-arches build — all existing jobs stay green. No push anywhere.
+
+## The two PR-description answers (Fable's questions, pre-drafted)
+
+**(a) The bearer token:** `kubernetes/mcp.md` DOES specify it ("A bearer token in the hub's `headers`, from a Secret, so reaching the port is not enough by itself. It identifies a caller (the harness), not a person"). Phase 1 did NOT implement it — the canonical HTTP handler and selftest have no auth check (`verified-here`, code read). The mock implements it as a values-driven option (`server.auth.*` → Secret-mounted file read per request; default off), so the out-of-the-box install is unchanged and a hub-facing deployment can turn it on.
+
+**(b) The narrowed artifact's revision:** it is the content hash (phase-4's recorded caveat). The git commit is NOT lost: source-watcher exposes the origin revision as `status.artifact.metadata["org.opencontainers.image.revision"]` on the generated ExternalArtifact (readable with the fetcher's existing get/watch RBAC — no new verbs), and for a GitRepository source the generator's fallback writes the GitRepository revision string (`main@sha1:<sha>`) when the upstream artifact carries no such annotation (current source-controller does not). The fetcher now records it in artifact.json as `origin_revision`; `repo_facts` surfaces it. If a future platform drops the annotation, the field is simply absent — the limitation is documented, not silent.
+
+## Repo layout (public)
+
+```
+k8s/tickets-mcp-mock/            NEW: ticket_mcp_mock.py, fixture/, test suite, Dockerfile, README.md
+k8s/fetcher/main.go, watch.go, core.go, core_test.go, watch_test.go, README.md   F6 + kinder startup + origin_revision + contract field
+k8s/image/Dockerfile             alpine 3.21 -> 3.22
+k8s/chart/chudmax-mcp/           values.yaml (defaults: mock on, naming, auth knob, egress fixes), templates
+                                 (deployment F3 + securityContext, networkpolicy-egress F4/F5, NOTES.txt), NEW README.md
+README.md                        naming, mock-by-default, build commands
+.github/workflows/image-chart.yml  kubeconform rendered (both variants), mock test + image jobs
+```
 
 ## Notes for future agents (learnings)
 
-- **Canonical quirks mirrored deliberately — they ARE the signature:** `resources/list` answers with the tools list; POST is accepted on any path (the docstring's `/mcp` is documentation, not enforcement); `protocolVersion` pinned to `2024-11-05`; 202 bodies truly empty; tickets trim MIDDLE (40/60, line-aligned, omission note), docs trim END; `read_doc` refuses anything outside the readable set via a resolve-based traversal check. The canonical selftest's check style is also the pattern to copy: spawn the server as a real subprocess, key results by call id (never by tool name — the same tool is called several times), assert on trimmed-vs-advertised caps.
-- **The `default N` schema descriptions are load-bearing** — the canonical selftest parses them and cross-checks behavior. Changing that wording is a signature break, not a docs edit.
-- The canonical `main` head was `de442410` on 2026-11-25 (unchanged since phase 4's verification); public `main` is `67d8616` (phases 2–4 merged). The recorded surface is current as of those commits.
-- Podman gotchas from phase 3 still apply in this sandbox: binfmt_misc is denied (no arm64 containers; host-side `qemu-aarch64` exec is the proven workaround), rootless pasta refuses container→host via the bridge gateway (smoke with `--network host` + host loopback).
-- Public-mirror discipline stands: no LAN addresses, credential names, or internal proxy hostnames in the public repo; the three labels (`verified-here` / `handoff-reported` / `speculation`) on every claim; the `helix-specs` branch is fast-forward-only.
-- PR flow (owner's standing delegation): propose freely via `propose_pull_request`, no approval wait; CI green + in-sandbox verification before merge; merge authority is CoS/owner; `mark_task_complete` only after merge; conventional commits; carry the deferred-LICENSE flag line in the PR description.
+- **The canonical quirks are the signature — keep them:** resources/list answers with the tools list; POST accepted on any path; protocolVersion `2024-11-05`; 202 bodies truly empty; tickets trim MIDDLE (40/60), docs trim END; the `default N` schema wording is load-bearing; `serverInfo.name == "chudmax-tickets"` is asserted by the canonical selftest.
+- **The per-call contract is THE contract:** never `Path.resolve()` a `current` path at startup; open the symlink path per call; artifact.json per call. The proof shape (v1 → swap v2 no restart → prune → still answers) is this card's test; phase 5 repeats it with real commits.
+- **Origin revision:** annotation key `org.opencontainers.image.revision`, in `status.artifact.metadata` (source-watcher `setArtifactRevisions`; code falls back to the source's Revision string — the API doc comment's "field is ignored" is stale); object-level annotations carry only commonMetadata; get/watch RBAC suffices to read it.
+- **F3's CA gotcha:** with pod-level automount off, a projected `serviceAccountToken` alone is not enough for `rest.InClusterConfig` — it reads token + ca.crt from the standard dir; add the `kube-root-ca.crt` ConfigMap source to the projection and mount at `/var/run/secrets/kubernetes.io/serviceaccount`.
+- **Egress under Cilium:** ipBlock on the service CIDR is unreliable (Cilium resolves the apiserver to backends); the podSelector-on-static-pods pattern is the default; ipBlock stays as the alternative knob.
+- Public-mirror discipline: no LAN addresses, credential names, or internal proxy hostnames in the public repo (Secret NAMES are metadata; token VALUES never enter values); three labels on every claim; `helix-specs` is fast-forward-only.
+- PR flow: propose freely via `propose_pull_request` (no approval wait); CI green + in-sandbox verification before merge; merge authority CoS/owner; `mark_task_complete` only after the public PR merges; conventional commits; LICENSE flag rides in the PR description.
