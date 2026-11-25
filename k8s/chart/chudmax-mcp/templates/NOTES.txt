@@ -1,34 +1,50 @@
-The chudmax-mcp chart is installed. The pod runs the fetcher sidecar; your MCP
-server is bring-your-own (disabled by default).
+The chudmax-mcp chart is installed. The pod runs the fetcher sidecar and — by
+default — the published canonical ticket server (k8s/tickets-mcp/), which answers
+the seven read-only tools from /data/current with the per-call contract: every
+call rereads the fetcher's symlink and its artifact.json, so swaps show up
+without restarts. Bring your own server by overriding the server.* values.
 
 What this install does NOT have yet:
 
 1. The ExternalArtifact. The chart only needs its name
    ({{ .Values.externalArtifact.name }}) — the k8s/repo-sync work creates it
-   (phase 4). Until it exists, the fetcher container exits and restarts with
-   backoff (its startup read is fatal by design) and self-heals when the
-   artifact appears.
-2. The image, if you kept the default tag: ghcr.io/urmanac/chudmax/mcp is
-   unpublished until the phase-10 milestone. Build/load it yourself meanwhile:
+   (phase 4). Until it exists, the fetcher container WAITS, logging and
+   retrying every resync period — it does not crash-loop (T-0037 phase 4b) —
+   and picks the artifact up when it appears.
+2. The images, if you kept the default tags: ghcr.io/urmanac/chudmax/fetcher
+   and ghcr.io/urmanac/chudmax/tickets-mcp are unpublished until the phase-10
+   milestone. Build/load them yourself meanwhile:
 
      podman build --platform linux/amd64,linux/arm64 \
-       --manifest ghcr.io/urmanac/chudmax/mcp:0.1.0 \
+       --manifest ghcr.io/urmanac/chudmax/fetcher:0.1.0 \
        -f k8s/image/Dockerfile k8s
 
-To attach your own MCP server:
+     podman build --platform linux/amd64,linux/arm64 \
+       --manifest ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0 \
+       -f k8s/tickets-mcp/Dockerfile k8s/tickets-mcp
 
-  helm upgrade <release> <chart> --set server.enabled=true \
+To run your own MCP server instead of the published one:
+
+  helm upgrade <release> <chart> \
     --set server.image.repository=<your-image> \
     --set server.image.tag=<tag> \
     --set server.command[0]=<your-server-binary> \
-    --set server.args[0]=--root \
-    --set server.args[1]={{ .Values.fetcher.root }}/current
+    --set server.args[0]=--http,--host=0.0.0.0,--data-root={{ .Values.fetcher.root }} \
+    (or set server.enabled=false to run the fetcher alone)
 
 Your server reads the volume contract documented in k8s/fetcher/README.md:
 revisions/<digest-hex>/ trees, the `current` symlink swapped atomically, and
-artifact.json beside every tree — reread through the symlink on every call.
+artifact.json beside every tree (url, revision, digest, produced, unpacked,
+origin_revision, source) — reread through the symlink on every call.
+
+Optional bearer auth (the server's --bearer-token-file): set
+server.auth.enabled=true and server.auth.secretName=<a Secret with the token>;
+the chart mounts it read-only at /var/run/mcp-auth and the server reads the file
+per request, so rotating the Secret needs no restart.
 
 NetworkPolicy caveats: the policies select the POD (both containers); a server
 with other egress needs adjusts networkPolicy.egress.extra or disables the
-policies. The egress rule for the kube-apiserver must match your cluster's
-service CIDR (networkPolicy.egress.apiServer.cidr — kubeadm default shipped).
+policies. The kube-apiserver egress rule defaults to the apiserver's static
+pods by label (Cilium-compatible; set networkPolicy.egress.apiServer.mode=cidr
+for the service-CIDR ipBlock alternative), and the artifact-server rule points
+at source-watcher's storage pods (port {{ .Values.networkPolicy.egress.sourceController.port }}).

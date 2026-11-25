@@ -14,12 +14,15 @@ digest check, size-capped untar through `fluxcd/pkg/tar`).
 fetcher fetch --url URL --digest sha256:... --root DIR
 # one-shot: download, verify, unpack, swap. What CI proves, and the debugging tool.
 
-fetcher watch --namespace NS --name NAME --root DIR
+`fetcher watch --namespace NS --name NAME --root DIR`
 # pod mode: read the one ExternalArtifact (Role: get, watch) at startup - which
 # covers a missed event after a restart - then watch it, re-read every --resync
 # (default 1m) as a fallback for a silent stream, and reconnect with the same
 # period when the stream drops. Every artifact change runs the core; the digest
-# already served is a no-op.
+# already served is a no-op. An artifact that does not exist yet (a fresh
+# install, before the repo-sync work creates it) is waited for with a backoff
+# of the resync period, not fatal - the fetcher stays up and self-heals
+# (T-0037 phase 4b).
 ```
 
 Shared tunables: `--retries 3`, `--keep 3` (revision dirs kept), `--max-download-bytes`
@@ -40,8 +43,16 @@ Shared tunables: `--retries 3`, `--keep 3` (revision dirs kept), `--max-download
 ```json
 {"url": "...", "revision": "main@sha1:...", "digest": "sha256:...",
  "produced": "2026-11-25T15:00:00Z", "unpacked": "2026-11-25T15:00:01Z",
- "source": "externalartifact chudmax/chudmax-tickets"}
+ "origin_revision": "main@sha1:...", "source": "externalartifact chudmax/chudmax-tickets"}
 ```
+
+`origin_revision` (added T-0037 phase 4b) is the git-side revision the ArtifactGenerator
+records beside the generated artifact - source-watcher writes the `org.opencontainers.image.revision`
+annotation into the ExternalArtifact's `status.artifact.metadata`, and the fetcher copies it
+here while it holds the object (get/watch verbs it already has; no new RBAC). For a
+GitRepository source the annotation carries the git revision string (the generator's fallback),
+so the git commit stays visible even though `revision` above is the content hash. The one-shot
+`fetch` mode reads no object, so it omits the field.
 
 `repo_facts` in pod mode reports these per call - the server reads
 `<root>/current/artifact.json` (and the files beside it) through the symlink

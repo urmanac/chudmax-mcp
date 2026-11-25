@@ -294,3 +294,34 @@ func TestRefusesForeignCurrentSymlink(t *testing.T) {
 		t.Fatal("a current symlink outside revisions/ must be refused")
 	}
 }
+
+// TestOriginRevisionRecorded covers the phase-4b addition: watch mode hands the
+// CoreOpts the git-side revision the generator recorded, and artifact.json
+// carries it as origin_revision; the one-shot fetch mode (no object read)
+// leaves the field out entirely.
+func TestOriginRevisionRecorded(t *testing.T) {
+	b := makeTarball(t, map[string]string{"tickets.md": "origin\n"})
+	url, _ := serveTarball(t, b)
+	digest := shaOf(b)
+
+	root := t.TempDir()
+	o := testOpts()
+	o.OriginRevision = "main@sha1:abc"
+	if _, err := FetchAndSwap(context.Background(), url, digest, root, o); err != nil {
+		t.Fatal(err)
+	}
+	m := readMeta(t, filepath.Join(root, "current", "artifact.json"))
+	if m.OriginRevision != "main@sha1:abc" {
+		t.Fatalf("origin_revision = %q, want main@sha1:abc", m.OriginRevision)
+	}
+
+	root = t.TempDir()
+	o = testOpts()
+	if _, err := FetchAndSwap(context.Background(), url, digest, root, o); err != nil {
+		t.Fatal(err)
+	}
+	m = readMeta(t, filepath.Join(root, "current", "artifact.json"))
+	if m.OriginRevision != "" {
+		t.Fatalf("origin_revision = %q, want absent", m.OriginRevision)
+	}
+}

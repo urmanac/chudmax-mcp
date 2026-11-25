@@ -253,3 +253,103 @@ func TestWatchFetchFailureKeepsPreviousTree(t *testing.T) {
 		t.Fatalf("previous tree disturbed: %q", got)
 	}
 }
+
+// TestWatchStartupNotFoundWaits is the phase-4b "kinder startup": a fresh
+// install has no ExternalArtifact yet; the fetcher must wait with backoff and
+// stay up (the old behavior was a fatal startup read), and self-heal when the
+// artifact appears.
+func TestWatchStartupNotFoundWaits(t *testing.T) {
+	v1 := makeTarball(t, map[string]string{"tickets.md": "v1\n"})
+	url1, count1 := serveTarball(t, v1)
+
+	// No object exists at all.
+	c := fake.NewClientBuilder().
+		WithScheme(testScheme(t)).
+		WithStatusSubresource(&sourcev1.ExternalArtifact{}).
+		Build()
+
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		o := testOpts()
+		o.Source = "externalartifact chudmax/chudmax-tickets"
+		done <- runWatch(ctx, c, nil, "chudmax", "chudmax-tickets", root, o, 50*time.Millisecond,
+			client.InNamespace("chudmax"))
+	}()
+
+	// Still waiting well past the first retry; nothing was fetched, nothing exited.
+	select {
+	case err := <-done:
+		t.Fatalf("runWatch exited before the artifact existed: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if n := count1(); n != 0 {
+		t.Fatalf("fetched %d times with no artifact around", n)
+	}
+
+	// The repo-sync work creates the artifact (spec first, then the status
+	// subresource, as the real API behaves); the next re-read must pick it up.
+	ea := &sourcev1.ExternalArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "chudmax-tickets", Namespace: "chudmax"},
+	}
+	if err := c.Create(context.Background(), ea); err != nil {
+		t.Fatal(err)
+	}
+	ea.Status.Artifact = artifactFor(url1, "main@sha1:aaa", shaOf(v1))
+	if err := c.Status().Update(context.Background(), ea); err != nil {
+		t.Fatal(err)
+	}
+	waitCurrent(t, root, "tickets.md", "v1\n")
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runWatch returned: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runWatch did not stop on context cancel")
+	}
+}
+
+// TestWatchRecordsOriginRevision proves the phase-4b artifact.json addition:
+// the git-side revision the generator recorded beside the artifact lands in
+// origin_revision, read from the object the watcher already holds.
+func TestWatchRecordsOriginRevision(t *testing.T) {
+	v1 := makeTarball(t, map[string]string{"tickets.md": "v1\n"})
+	url1, _ := serveTarball(t, v1)
+
+	ea := &sourcev1.ExternalArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "chudmax-tickets", Namespace: "chudmax"},
+	}
+	ea.Status.Artifact = artifactFor(url1, "latest@sha256:aaa", shaOf(v1))
+	ea.Status.Artifact.Metadata = map[string]string{originRevisionAnnotation: "main@sha1:abc123"}
+	c := fake.NewClientBuilder().
+		WithScheme(testScheme(t)).
+		WithStatusSubresource(&sourcev1.ExternalArtifact{}).
+		WithObjects(ea).
+		Build()
+
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		o := testOpts()
+		o.Source = "externalartifact chudmax/chudmax-tickets"
+		done <- runWatch(ctx, c, nil, "chudmax", "chudmax-tickets", root, o, time.Minute,
+			client.InNamespace("chudmax"))
+	}()
+
+	waitCurrent(t, root, "tickets.md", "v1\n")
+	m := readMeta(t, filepath.Join(root, "current", "artifact.json"))
+	if m.OriginRevision != "main@sha1:abc123" {
+		t.Fatalf("origin_revision = %q, want main@sha1:abc123", m.OriginRevision)
+	}
+	cancel()
+	<-done
+}
