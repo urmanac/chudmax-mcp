@@ -77,7 +77,14 @@ jobs:
           grep -qE 'toEntities:' /tmp/rendered-cilium.yaml
           grep -q 'kube-apiserver' /tmp/rendered-cilium.yaml
       - name: the default render carries NO CiliumNetworkPolicy (auto resolves to the fallback without the CRDs — phase 6's stock-kind install)
-        run: ! grep -q 'CiliumNetworkPolicy' /tmp/rendered-defaults.yaml
+        run: |
+          # NB: NOT the inline `run: ! grep` form — a leading ! starts a YAML tag
+          # and the negation is silently eaten (the phase-5 CI incident).
+          if grep -q 'CiliumNetworkPolicy' /tmp/rendered-defaults.yaml; then
+            echo 'FAIL: the default render carries a CiliumNetworkPolicy — auto did not fall back'
+            exit 1
+          fi
+          echo 'OK: the default render is CNP-free (the ipBlock fallback)'
 
   image:
     runs-on: ubuntu-latest

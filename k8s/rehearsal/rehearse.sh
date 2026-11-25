@@ -151,7 +151,7 @@ start_poller() { # continuous list_tickets polling for $1 seconds — runs acros
     --command -- sh -c "sleep 3; i=0; while [ \$i -lt $(( $1 / 2 )) ]; do \
       echo \"POLL \$i: \$(curl -sS --max-time 4 -X POST -H 'Content-Type: application/json' \
       -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"list_tickets\",\"arguments\":{}}}' \
-      http://rehearsal-chudmax-mcp.$NS.svc:8080/mcp | head -c 600)"; sleep 2; i=\$((i+1)); done" \
+      http://rehearsal-chudmax-mcp.$NS.svc:8080/mcp | head -c 600)\"; sleep 2; i=\$((i+1)); done" \
     -q --overrides '{"spec":{"automountServiceAccountToken":false}}' >/dev/null
 }
 wait_for_ticket() { # $1 = ticket id; polls the POLLER'S LOG only (nobody touches Flux or the pod)
