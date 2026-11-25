@@ -38,7 +38,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $hosts := .Values.allowedHosts -}}
 {{- if kindIs "string" $hosts -}}
 {{- if eq $hosts "auto" -}}
-{{- printf "%s.%s.svc,%s.%s.svc.cluster.local,localhost,127.0.0.1" (include "chudmax-web.fullname" .) .Release.Namespace (include "chudmax-web.fullname" .) .Release.Namespace -}}
+{{- /* Short, mid and fully-qualified Service names (a same-namespace curl sends
+       the SHORT one as Host — host_name() strips the port and lowercases), then
+       loopback for port-forwards. */ -}}
+{{- $full := include "chudmax-web.fullname" . -}}
+{{- printf "%s,%s.%s.svc,%s.%s.svc.cluster.local,localhost,127.0.0.1" $full $full .Release.Namespace $full .Release.Namespace -}}
 {{- else -}}
 {{- $hosts -}}
 {{- end -}}
