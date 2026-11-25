@@ -1,0 +1,21 @@
+The ChudMax web — Strata's serve.server with the in-process MockEngine.
+
+    http://{{ include "chudmax-web.fullname" . }}:{{ .Values.port }}
+
+Real endpoints: GET /health, GET /mcp, POST /v1/chat/completions (+ /v1/messages,
+/v1/responses). The image is built from the public kingdonb/Strata at the pinned
+SHA recorded in the umbrella's README — unpublished until phase 10: build and
+load it yourself until then (the umbrella's kind-smoke.sh does, tagged with the
+chart's default reference).
+
+The DNS-rebinding guard: without an API key every request passes the Host check
+first. This release's allowed Hosts:
+
+    {{ include "chudmax-web.allowedHosts" . }}
+
+(set web.allowedHosts="auto" — the default — for the release's Service DNS names
++ localhost; a list to override; "*" disables the check — discouraged.)
+
+Phase 7 will wire the in-cluster tickets-mcp server into Strata's McpHub via a
+mounted --mcp-config (extraArgs + a ConfigMap volume) so GET /mcp reports tool
+counts; this chart ships the passthrough knobs, not the wiring.

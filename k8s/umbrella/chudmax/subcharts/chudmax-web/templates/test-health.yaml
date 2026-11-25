@@ -1,0 +1,23 @@
+# The web hook: a pod curling /health through the web Service. The Host header
+# is the Service's DNS name (curl sends what it resolves) — so this hook ALSO
+# proves the allowedHosts auto default passes Strata's DNS-rebinding guard.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "chudmax-web.fullname" . }}-health-test
+  labels:
+    {{- include "chudmax-web.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: curl
+      image: curlimages/curl:8.12.1
+      imagePullPolicy: IfNotPresent
+      args:
+        - -fsS
+        - --max-time
+        - "10"
+        - http://{{ include "chudmax-web.fullname" . }}:{{ .Values.port }}/health
