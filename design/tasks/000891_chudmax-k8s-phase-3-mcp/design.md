@@ -2,71 +2,75 @@
 
 > **Public mirror** — the full-fidelity record (including deployment specifics) lives in the private source-of-truth repo.
 
-Phase 3 packages what phases 1 and 2 made into the pod's one image and manifests the pod wiring. It adds no new logic: the fetcher already keeps `/data/current` fresh and the server already reads through the symlink per call, so the pod is two containers from one image over one shared volume. Requirements in `requirements.md` here; the phase-3 row and cross-cutting rules live in `kubernetes/phases.md` on the private repo's `main` (source `design/tasks/000888_fetch-mr-17/design.md`, SPIKE table row C). All decisions below assume the public repo `urmanac/chudmax-mcp` as the work site.
+Phase 3 packages the fetcher (phase 2, merged on public `main` @ `cdf5095`) into the pod's image and manifests the pod wiring. It adds no new logic: the fetcher already keeps `/data/current` fresh, and the consumer reads through the symlink per call. **Steering revision (CoS brief, 2026-11-25):** the card's "fetcher sidecar + ticket server" wording predates the owner's boundary — the ticket server is bring-your-own and this repo ships none. The first draft of this spec proposed a pinned, digest-checked build-time bundle of the private server; that mechanism is dropped entirely (no bundle, no lock file, no private-repo token in CI). Requirements in `requirements.md` here; the phase-3 row and cross-cutting rules live in `kubernetes/phases.md` on the private source-of-truth repo's `main` (source `design/tasks/000888_fetch-mr-17/design.md`, SPIKE row C).
 
 ## Shape
 
 ```
-                      one image: ghcr.io/urmanac/chudmax/mcp:<tag>   (arm64 + amd64 manifest list)
-                      ┌──────────────────────────────────────────────┐
- pod (chart)          │  fetcher (Go, CGO off)   ticket_mcp.py (py3) │
- ┌──────────────────┐ │  watch mode              --http mode          │
- │ Deployment       │ │  Role: get,watch on      reads /data/current  │
- │  c1: fetcher ────┼─►  the ONE ExternalArt.  per call, answers   │
- │  c2: server  ────┼─►                          HTTP POSTs :8080   │
- │  shared emptyDir │ └──────────────────────────────────────────────┘
- │   /data          │        │                    ▲
- └──────────────────┘        │                    │ Service :8080 (values-gated)
-        ▲                    ▼                    │
-        │             GET/watch ExternalArt.  consumers (later phases:
-        │             GET artifact tarball     engine via pointer Service,
-        │             from source-controller   Gateway/MetalLB at 13/14)
-        │                    │
- ┌──────┴────────────────────┴───────────┐
- │ NetworkPolicies: egress = DNS 53,     │
- │ kube-apiserver 443, source-controller │
- │ artifact port; ingress = server port  │
- └───────────────────────────────────────┘
+ pod (chart)                        image: chudmax mcp fetcher (amd64 + arm64 manifest list)
+ ┌─────────────────────────────┐   ┌──────────────────────────────┐
+ │ Deployment                  │   │ fetcher (Go, CGO off)        │
+ │  c1: fetcher watch ─────────┼──►│  GET/watch the ONE External- │
+ │  c2 (optional, values-      │   │  Artifact; GET the tarball   │
+ │      driven: user's own     │   │  from source-controller;     │
+ │      MCP server, disabled   │   │  verify, unpack, swap        │
+ │      by default) ───────────┼──►│  (only c1 uses this image)   │
+ │  shared emptyDir  /data     │   └──────────────────────────────┘
+ └──────────────┬──────────────┘        │                 ▲
+                │        revisions/<hex>/ + current symlink + artifact.json
+                │        (the volume contract, k8s/fetcher/README.md)
+                ▼                                │
+   Service :<port> — rendered only when c2 is enabled; consumers reach the user's server
+        ▲                                        │
+        │                    GET/watch ExternalArtifact (apiserver 443)
+        │                    GET artifact tarball (source-controller :<port>)
+ ┌──────┴───────────────────────────────────────┴──────────┐
+ │ NetworkPolicies: egress = DNS 53 + apiserver 443 +      │
+ │ source-controller artifact port (default-on); ingress = │
+ │ server port, only when c2 is enabled                    │
+ └─────────────────────────────────────────────────────────┘
 ```
 
-The chart does **not** create the ExternalArtifact (phase 4 owns it); the Deployment only needs its name from values. Until phase 4's objects exist the fetcher sidecar retries its startup read — that is the "parts, not placement" state by design.
+The chart does **not** create the ExternalArtifact (phase 4 owns it). Until phase 4's objects exist, the fetcher's startup `Get` fails and the process exits (`verified-here` from `watch.go`/`main.go`: startup-`Get` error → `runWatch` returns → `log.Fatal`) — the container crash-loops with restart backoff until the artifact appears, then self-heals via the startup read. Honest for a parts-phase install; noted in the chart's NOTES.txt.
 
 ## Repo layout (public repo)
 
 ```
-k8s/fetcher/            (exists, phase 2 — untouched)
-k8s/image/Dockerfile    multi-stage: golang builder (CGO_ENABLED=0, GOARCH=$TARGETARCH)
-                        → python:3.12-slim; fetcher + bundle + /data volume user
-k8s/image/bundle.lock   pinned ticket-server commit SHA + sha256 of ticket_mcp.py
-k8s/chart/chudmax-mcp/  Chart.yaml, values.yaml, templates/ (sa, role, rolebinding,
-                        deployment, service, networkpolicy-egress, networkpolicy-ingress,
-                        _helpers, NOTES.txt)
-.github/workflows/image-chart.yml   chart: helm lint + helm template;
-                                    image: build --platform linux/amd64,linux/arm64 (no push)
+k8s/fetcher/                       (exists, phase 2 — untouched)
+k8s/image/Dockerfile               multi-stage: golang builder (CGO_ENABLED=0,
+                                   GOOS/GOARCH from TARGETOS/TARGETARCH) → alpine,
+                                   non-root user; fetcher only
+k8s/chart/chudmax-mcp/             Chart.yaml (v2, 0.1.0), values.yaml, templates/
+                                   (sa, role, rolebinding, deployment, service,
+                                   networkpolicy-egress, networkpolicy-ingress,
+                                   _helpers, NOTES.txt)
+.github/workflows/image-chart.yml  chart: helm lint + helm template;
+                                   image: podman manifest-list build, both arches, no push
 ```
 
 ## Key decisions
 
-1. **One image, two containers, one shared `emptyDir`.** The card says one image for both components. Two containers from the same image (different `command`) keeps one build/digest/security-context, lets Kubernetes restart or probe them independently, and avoids a supervisor process. The volume is `emptyDir` with a size limit: the tree is fully regenerated from the Flux artifact on pod start (fetcher's startup GET), so nothing needs persistence — persistence questions belong to placement, not here.
-2. **Bundle mechanism (pending the Open Question):** per the re-home boundary the ticket MCP enters as a pinned, digest-checked build-time bundle. `k8s/image/bundle.lock` carries the private-repo commit SHA and the sha256 of `tools/mcp/ticket_mcp.py`; the build fetches that exact blob and fails loudly on mismatch. The public repo never carries the server source; the image does (accepted by design — phase 10 publishes the ticket server as a credential-free-pullable image, and it contains no data, only code). Fallback if a CI token on the public repo is unwanted: vendor the file now and delete the lock file.
-3. **Podman first, buildx in CI.** The developer proof is `podman build --platform linux/amd64,linux/arm64 --manifest <name>:<tag>` on this sandbox plus a `podman run` smoke of both binaries. CI uses Docker buildx (preinstalled on `ubuntu-latest`, standard `setup-buildx` action) for the same platforms. Because the fetcher is pure Go with `CGO_ENABLED=0`, the per-arch stage cross-compiles and **no QEMU emulation is needed at build time** — only `podman run` of the arm64 image needs binfmt, which stays best-effort.
-4. **Minimal image, non-root.** Final stage `python:3.12-slim` (multi-arch official base), stdlib-only server assumed (Open Question 2), non-root `USER`, no package installs if deps stay empty. The fetcher's tunables keep their phase-2 defaults; only `--resync` and the ExternalArtifact name are chart values.
-5. **Role exactly as phase 2 prescribed:** namespaced Role on `source.toolkit.fluxcd.io/externalartifacts`, verbs `get`+`watch`, `resourceNames` pinned to the one artifact, bound to a chart-created ServiceAccount. Only the fetcher container mounts the token; the server container sets `automountServiceAccountToken: false`. Phase 4 may widen this to the "smallest Role" answer (its `list` question).
-6. **NetworkPolicies, three directions in two objects.** Egress (policy type `Egress` on the pod): DNS to kube-system (UDP/TCP 53), TCP 443 to the cluster's service CIDR (the fetcher's controller-runtime client watches the **kube-apiserver** — an easy-to-miss rule), and TCP to source-controller's artifact port in `flux-system` (namespace + port from values, defaults commented to match the platform inventory in phase 12). Ingress (policy type `Ingress` on the pod): TCP to the server port from the release namespace plus values-listed extra namespaces. The card's "admit the sidecar to source-controller only" is honored by the egress policy; kubelet probes are node-originated and unaffected in the common CNIs (noted, not engineered around).
-7. **A Service is added** (values-gated, on by default) beyond the card's literal list: the server's HTTP mode is unreachable without one, and phase 11's pointer Service needs a target. Small, harmless, flagged in the PR for review.
-8. **Probes kept honest:** server container gets a `tcpSocket` probe on its port (the HTTP mode is POST-only and returns 405 to GET, which Kubernetes would read as a failure — so no `httpGet`); fetcher container gets an `exec` probe on `/data/current` existence once the first artifact lands. Liveness stays process-level on both.
-9. **Chart defaults reference an unpublished image tag** (`ghcr.io/urmanac/chudmax/mcp:0.1.0`) — publishing is phase 10; until then the tag exists only in local podman and CI caches. `helm template` does not pull, so lint/template proofs are unaffected.
+1. **Fetcher-only image (bring-your-own server).** The owner's re-home boundary, confirmed by the CoS steering brief, supersedes the card's bundled-server wording. The image contains the fetcher and nothing else; the phase-1 dependency dissolves (the HTTP-mode server is the user's own). No private-repo material enters the public repo or the image.
+2. **Optional values-driven server container.** `server.enabled: false` by default; when enabled, the user supplies `image`, `command`, `args`, `env`, `port`, `resources`; the chart mounts the shared volume into it and renders the Service + ingress policy. Token automount off for that container by default (knob provided); a user's server needing its own RBAC adds its own — documented, not built. The interface users code against is the volume contract in `k8s/fetcher/README.md`, restated nowhere else (pointer, not copy — one source of truth).
+3. **Base image: alpine, non-root.** Multi-arch official base, tiny, and it has a shell — which the fetcher's `exec` readiness probe (`test -e /data/current`) and smoke tests want; `distroless/static:nonroot` is the tighter alternative and was rejected on the shell point. Swap-able detail (`speculation`-labeled taste call, flagged in the PR).
+4. **Podman first — and podman in CI too.** Local proof: `podman build --platform linux/amd64,linux/arm64 --manifest <name>:<tag>` plus `podman run` smoke (amd64 required: fetch → `current` swap + `artifact.json`; arm64 under qemu best-effort). CI mirrors the same toolchain (podman on `ubuntu-latest`; qemu-user-static only for the optional arm64 smoke run) with Docker buildx recorded as the fallback if podman-in-Actions frictions out. Because the fetcher is pure Go with `CGO_ENABLED=0`, the per-arch stage cross-compiles and **the build itself needs no emulation**.
+5. **One shared `emptyDir` volume.** The tree is fully regenerated from the Flux artifact on pod start (the fetcher's startup GET), so nothing needs persistence; size limit from values. Persistence questions belong to placement, not here.
+6. **Role exactly as phase 2 prescribed:** namespaced Role on `source.toolkit.fluxcd.io/externalartifacts`, verbs `get`+`watch`, `resourceNames` pinned to the one artifact, bound to a chart-created ServiceAccount; only the fetcher container mounts the token. Phase 4 may revisit for the "smallest Role" answer.
+7. **NetworkPolicies, pod-level, values-gated.** Egress policy default-on (it is the sidecar's promise): DNS to kube-system (UDP/TCP 53), TCP 443 to the cluster's service CIDR (the fetcher's controller-runtime client watches the **kube-apiserver** — the easy-to-miss rule), and TCP to source-controller's artifact port (namespace + port from values, defaults commented to match the phase-12 platform inventory). Plus `extraEgress` passthrough. Ingress policy rendered only when the server container is enabled: TCP to the server port from the release namespace + `extraIngress` passthrough. Caveat documented in values comments: NetworkPolicy podSelectors hit **all** containers in the pod — a user's server with other egress needs adjusts the passthroughs or disables the policies (knob provided).
+8. **Service only with the server.** The card's literal list (Deployment, Role, NetworkPolicies) stands for the default install; the Service renders only when `server.enabled=true` — nothing points at a disabled pod.
+9. **Probes:** fetcher container gets an `exec` readiness probe on `/data/current` existence (shell exists on alpine) and no liveness probe beyond Kubernetes' default process checks; the optional server container ships no probes by default (the user knows their server).
+10. **Chart default image tag is unpublished** (`ghcr.io/urmanac/chudmax/mcp:0.1.0`): publishing is phase 10; until then NOTES.txt says to build/load the image yourself. `helm template` does not pull, so lint/template proofs are unaffected.
 
 ## Notes for future agents (learnings)
 
-- The public repo's README currently says "This repo does not ship a ticket server" — phase 3 supersedes that paragraph (bundle default + override knob); update it in the same PR.
-- Fetcher facts for the Dockerfile: module `github.com/urmanac/chudmax-mcp/k8s/fetcher`, Go 1.27, flags `watch --namespace --name --root [--resync]`; `fetch --url --digest --root`. The namespace can come from the Downward API (`metadata.namespace`).
+- Fetcher facts for the Dockerfile and chart: module `github.com/urmanac/chudmax-mcp/k8s/fetcher`, Go 1.27; `watch --namespace --name --root [--resync]` (startup `Get` failure is fatal to the process — CrashLoop-with-backoff is the designed pre-phase-4 state); `fetch --url --digest --root`. The namespace can come from the Downward API.
 - The artifact URL in `status.artifact.url` points at source-controller's HTTP endpoint; the fetcher's egress must admit **both** that port and the kube-apiserver (watch stream). Forgetting the apiserver rule is the classic way a default-deny egress policy breaks a Flux consumer.
-- fluxcd pins `go-digest` at the BLAKE3 pseudo-version (phase-2 gotcha) — the image's Go build inherits it via `k8s/fetcher/go.mod`; nothing extra to do in Docker.
-- The Go build in Docker needs the whole `k8s/fetcher/` directory (go.mod/go.sum copied first for layer caching, then sources).
-- Phase-2 precedent for proof labels: everything checked in this sandbox is `verified-here` once run; bundle SHA/digest is `handoff-reported` from the private repo until the build verifies it; real-cluster RBAC/network behavior stays `speculation` until phase 5.
+- fluxcd pins `go-digest` at the BLAKE3 pseudo-version (phase-2 gotcha) — the image's Go build inherits it via `k8s/fetcher/go.mod`; nothing extra in Docker. The Go build stage needs `go.mod`/`go.sum` copied before sources for layer caching.
+- Docs rule (owner-confirmed): the public `helix-specs` branch is a fast-forward-only public record — never reset/force-push/delete public branches (they do not propagate through the proxy and only diverge the mirror); no LAN addresses, credential names/scopes/expiry, or internal proxy hostnames in public docs; design reasoning and contracts are welcome.
+- PR flow (owner's standing delegation, 2026-11-25): PRs are proposed freely via `propose_pull_request`, no approval wait; merge authority is the CoS/owner; CI green + in-sandbox verification before anyone merges; the task is not complete until the PR is merged.
+- Phase-2 precedent for labels: what this sandbox ran is `verified-here`; the steering brief's decisions are `handoff-reported` from the CoS; toolchain behavior not yet exercised (podman manifest builds in Actions, qemu arm64 smoke) stays `speculation` until run.
 
 ## What this settles
 
-- The pod exists as a unit: image (both arches), chart (wiring), CI (re-proof). Nothing is placed anywhere: no cluster touched, no registry push, no box change — the first phase where the parts become installable.
-- What stays `speculation`: real-API-server field-selector watch and real RBAC (phase 5), the narrowed artifact's tarball layout (phase 4), source-controller port/namespace on the real platform (phase 12 inventory), publishing/signing (phase 10).
+- The pod exists as an installable unit: fetcher-only image (both arches), chart (wiring + documented optional server), CI (re-proof). Nothing is placed anywhere: no cluster touched, no registry push, no box change — the phase where the part becomes installable by someone else.
+- What stays `speculation`: podman multi-platform manifest builds in Actions; qemu arm64 smoke reliability; real-API-server watch and real RBAC/NetworkPolicy behavior (phase 5); the narrowed artifact's tarball layout (phase 4); source-controller port/namespace on the real platform (phase 12); publishing/signing (phase 10).
