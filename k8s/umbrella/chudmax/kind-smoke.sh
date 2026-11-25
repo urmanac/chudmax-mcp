@@ -211,7 +211,10 @@ helm upgrade --install chudmax "$CHART" -n "$NS" --create-namespace \
 say "7. wait for the pods"
 kubectl rollout status deploy/chudmax-web -n "$NS" --timeout=300s
 for i in $(seq 1 60); do
-  phase=$(kubectl get pod -n "$NS" -l app.kubernetes.io/name=chudmax-mcp -o jsonpath='{.items[0].status.phase}' 2>/dev/null || true)
+  # the pod's LABEL renders the dependency ALIAS (helm: .Chart.Name is the
+  # alias inside a subchart), not the chart name - select accordingly; the
+  # deterministic chudmax-mcp names come from fullnameOverride (labels don't)
+  phase=$(kubectl get pod -n "$NS" -l app.kubernetes.io/name=mcp -o jsonpath='{.items[0].status.phase}' 2>/dev/null || true)
   [ "$phase" = "Running" ] && break
   sleep 2
 done
