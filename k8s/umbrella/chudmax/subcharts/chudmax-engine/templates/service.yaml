@@ -1,0 +1,16 @@
+# The engine's stable in-cluster name. A Service WITHOUT a selector: nothing
+# here selects pods, because there are none — the engine is external. The
+# EndpointSlice (rendered when endpoint.host is set) is the only moving part;
+# clients keep pointing at this name.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "chudmax-engine.fullname" . }}
+  labels:
+    {{- include "chudmax-engine.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
