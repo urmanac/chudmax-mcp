@@ -89,3 +89,39 @@ README.md                        naming, mock-by-default, build commands
 - **Egress under Cilium:** ipBlock on the service CIDR is unreliable (Cilium resolves the apiserver to backends); the podSelector-on-static-pods pattern is the default; ipBlock stays as the alternative knob.
 - Public-mirror discipline: no LAN addresses, credential names, or internal proxy hostnames in the public repo (Secret NAMES are metadata; token VALUES never enter values); three labels on every claim; `helix-specs` is fast-forward-only.
 - PR flow: propose freely via `propose_pull_request` (no approval wait); CI green + in-sandbox verification before merge; merge authority CoS/owner; `mark_task_complete` only after the public PR merges; conventional commits; LICENSE flag rides in the PR description.
+
+## Implementation notes (2026-11-25, sandbox — all `verified-here`)
+
+- **My own suite caught a real bug in my first mock draft:** `ticket_text()` read the bundled
+  fixture path even in `--data-root` mode — after a swap, `repo_facts` updated but the ticket
+  CONTENT stayed stale. The per-call test (swap → assert content change) found it before any
+  commit left the sandbox. Lesson: the contract test must assert on BOTH the facts and the
+  content across a swap, not the facts alone.
+- **The `--host 0.0.0.0` deployment gotcha:** the mock's default HTTP host is 127.0.0.1
+  (canonical-compatible for local dev), which is unreachable through a port forward — and in a
+  pod, the Service reaches the POD IP, not the container's localhost. The chart's default args
+  pass `--host 0.0.0.0`; any BYO HTTP server needs the same. Caught by the amd64 container smoke
+  (curl through `-p` got connection-refused until the host was widened).
+- **kubeconform is the F3 check, proven:** `kubeconform -strict` on the rendered chart validates
+  7 + 5 resources in the two variants; the negative probe (the old container-level
+  `automountServiceAccountToken` shape) is rejected with `additionalProperties not allowed`. The
+  chart renders ONLY core k8s kinds, so default schemas suffice — no Flux CRD schema plumbing
+  needed for the chart (the repo-sync manifests' flux-schema validation is its own workflow).
+- **Sandbox toolchain does not persist between sessions:** podman/skopeo/qemu were gone; podman
+  5.4.2 + qemu-user-static reinstalled via apt in minutes. The phase-3 gotchas reproduced
+  exactly: binfmt denied (no arm64 containers run), `podman create --platform <manifest-list>`
+  grabs the amd64 instance (dodge: create from the image ID that `podman pull --platform`
+  recorded, then export). Arm64 runtime proof for the mock: `qemu-aarch64 -L <arm64-rootfs>
+  <rootfs>/usr/local/bin/python3.12 ticket_mcp_mock.py` — a full stdio tools/list run, no binfmt
+  needed for DIRECT qemu invocation.
+- **The private MR via the GitLab commits API:** one POST per commit with `actions: [{action:
+  update, file_path, content}]` — and the JSON body NEEDS `Content-Type: application/json`
+  (without it the API parses the body as form fields and answers `branch is missing`). Branch
+  content re-fetched afterward and diffed byte-identical against the locally validated tree.
+- **Boundary gotcha for trim assertions:** the server's parsed ticket block ends at the next
+  heading's LINE START (keeping the newline), while a naive `find("\n## ")` helper cuts before
+  it — the fixture-side reader must use `nxt + 1` or the `max_chars=N returns all` fingerprint
+  mismatches by exactly one character.
+- **The canonical selftest's checks transfer cleanly** to a fresh implementation: keyed-by-id
+  results, the trim-note regex, the advertised-default cross-check — the mock's suite is the
+  same species with pod-mode + auth + hygiene checks added.
