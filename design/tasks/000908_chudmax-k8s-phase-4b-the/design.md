@@ -143,3 +143,40 @@ README.md                        naming, mock-by-default, build commands
   because base and candidate resolve the same way. Plain-file mode is the opposite: resolve
   at STARTUP (no symlink churn behind a plain path — and the startup resolve is exactly what
   makes a relative `--tickets` work from any cwd).
+- **Scope flip (owner, 2026-11-25): publish the canonical, drop the mock.** The public
+  `k8s/tickets-mcp/` carries the private server's `ticket_mcp.py` + `selftest.py`
+  BYTE-EXACT — which forced the canonical dir shape to transplant (`tools/mcp/` under
+  `k8s/tickets-mcp/`, because the selftest hardcodes `ROOT = parents[2]` and
+  `SERVER = ROOT/tools/mcp/ticket_mcp.py`), plus synthetic test-only fixtures at the
+  subtree root. Sequence honored: every canonical change landed in MR !20 FIRST
+  (bearer `8c5a1929`, freeze note `e83a3c4c`, _find_root `82775933`, 202 framing
+  `7e7375d4`), then was re-published byte-exact (hash-verified) — the canonical defines
+  the contract; the public copy never diverges.
+- **The published subtree broke `_find_root` — and the fix is a marker, not a copy:**
+  `_find_root` walked up to the first `.git`, so a fixture subtree inside the public
+  checkout resolved its readable set to the ENCLOSING repo root (1-doc index, AGENTS.md
+  refused). Fix (canonical `82775933`): the walk also stops at `STATE.md` beside
+  `tickets.md` — the complete-chudmax-tree marker. The private repo root carries both
+  markers, so private behavior is unchanged (32→33 checks green on both trees). Lesson:
+  any published subtree of a git repo needs its own tree marker, and the selftest's
+  relative-launch + list_docs checks are exactly what caught it.
+- **The unframed HTTP 202 hung every keep-alive client — and the urllib selftest could
+  not see it:** the canonical answered a notification POST with a bare `202` (no
+  Content-Length); HTTP/1.1 keep-alive clients read an unframed body until close and
+  hang (curl did, in the container smoke). The selftest never caught it because urllib
+  sends `Connection: close` and reads to EOF happily. Fix (canonical `7e7375d4`): the
+  202 now carries `Content-Length: 0`; the regression probe uses `http.client` (which
+  speaks keep-alive) and asserts the framing — a probe the old check structurally could
+  not be. The mock had the framing right all along; the divergence only became visible
+  when one contract replaced two.
+- **Podman manifest pollution:** rebuilding an image while a container still holds the
+  old one makes `podman rmi <manifest>` fail SILENTLY (output redirected), the rebuild
+  then ADDS instances to the existing manifest (2x amd64 + 2x arm64), and
+  `podman run <manifest>` grabs the STALE instance — the smoke then proves the OLD
+  code while `podman exec` greps the NEW file (the contradiction that ate an hour).
+  Clean procedure: `podman rm -f` the holder, `rmi -f` the manifest by ID, rmi every
+  `<none>` instance, ONE fresh build, then verify the manifest lists exactly one
+  instance per arch BEFORE running anything. And for arch-specific runs, resolve the
+  instance image in local storage by `podman inspect --format {{.Architecture}}` —
+  `podman pull --platform localhost/...` hits the registry (localhost is a registry
+  hostname) and fails rootless.
