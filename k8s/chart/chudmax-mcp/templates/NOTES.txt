@@ -1,5 +1,5 @@
 The chudmax-mcp chart is installed. The pod runs the fetcher sidecar and — by
-default — the bundled mock ticket server (k8s/tickets-mcp-mock/), which answers
+default — the published canonical ticket server (k8s/tickets-mcp/), which answers
 the seven read-only tools from /data/current with the per-call contract: every
 call rereads the fetcher's symlink and its artifact.json, so swaps show up
 without restarts. Bring your own server by overriding the server.* values.
@@ -12,7 +12,7 @@ What this install does NOT have yet:
    retrying every resync period — it does not crash-loop (T-0037 phase 4b) —
    and picks the artifact up when it appears.
 2. The images, if you kept the default tags: ghcr.io/urmanac/chudmax/fetcher
-   and ghcr.io/urmanac/chudmax/tickets-mock are unpublished until the phase-10
+   and ghcr.io/urmanac/chudmax/tickets-mcp are unpublished until the phase-10
    milestone. Build/load them yourself meanwhile:
 
      podman build --platform linux/amd64,linux/arm64 \
@@ -20,10 +20,10 @@ What this install does NOT have yet:
        -f k8s/image/Dockerfile k8s
 
      podman build --platform linux/amd64,linux/arm64 \
-       --manifest ghcr.io/urmanac/chudmax/tickets-mock:0.1.0 \
-       -f k8s/tickets-mcp-mock/Dockerfile k8s/tickets-mcp-mock
+       --manifest ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0 \
+       -f k8s/tickets-mcp/Dockerfile k8s/tickets-mcp
 
-To run your own MCP server instead of the mock:
+To run your own MCP server instead of the published one:
 
   helm upgrade <release> <chart> \
     --set server.image.repository=<your-image> \
@@ -37,9 +37,9 @@ revisions/<digest-hex>/ trees, the `current` symlink swapped atomically, and
 artifact.json beside every tree (url, revision, digest, produced, unpacked,
 origin_revision, source) — reread through the symlink on every call.
 
-Optional bearer auth (the mock's --bearer-token-file): set
+Optional bearer auth (the server's --bearer-token-file): set
 server.auth.enabled=true and server.auth.secretName=<a Secret with the token>;
-the chart mounts it read-only at /var/run/mcp-auth and the mock reads the file
+the chart mounts it read-only at /var/run/mcp-auth and the server reads the file
 per request, so rotating the Secret needs no restart.
 
 NetworkPolicy caveats: the policies select the POD (both containers); a server

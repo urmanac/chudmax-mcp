@@ -1,6 +1,6 @@
 # Default values for the chudmax-mcp chart.
-# The default install runs TWO containers: the fetcher sidecar and the bundled
-# mock ticket server (k8s/tickets-mcp-mock/). Bring your own server by
+# The default install runs TWO containers: the fetcher sidecar and the published
+# canonical ticket server (k8s/tickets-mcp/). Bring your own server by
 # overriding the server.* values below.
 
 nameOverride: ""
@@ -39,31 +39,32 @@ fetcher:
   resync: 1m
   resources: {}
 
-# The pod's MCP server container. The default is this repo's own mock
-# (k8s/tickets-mcp-mock/): the fixed per-call contract — every call rereads
-# /data/current (the fetcher's symlink) and its artifact.json, no restarts.
+# The pod's MCP server container. The default is this repo's published canonical
+# server (k8s/tickets-mcp/): the source-of-truth server's own file, byte-exact, on
+# the fixed per-call contract — every call rereads /data/current (the fetcher's
+# symlink) and its artifact.json, no restarts.
 # Bring your own: override image/command/args (keep --data-root on the shared
 # volume so the per-call contract holds), or set enabled: false to run the
-# fetcher alone. The mock image tag is unpublished until the phase-10
+# fetcher alone. The image tag is unpublished until the phase-10
 # publishing milestone — build/load it yourself meanwhile (podman build
 # --platform linux/amd64,linux/arm64 --manifest <registry>/<name>:<tag>
-# -f k8s/tickets-mcp-mock/Dockerfile k8s/tickets-mcp-mock).
+# -f k8s/tickets-mcp/Dockerfile k8s/tickets-mcp).
 server:
   enabled: true
   image:
-    repository: ghcr.io/urmanac/chudmax/tickets-mock
+    repository: ghcr.io/urmanac/chudmax/tickets-mcp
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   # --host 0.0.0.0 matters: the Service reaches the POD IP, not the container's
   # localhost (caught by the phase-4b smoke test).
-  command: ["python3", "/app/ticket_mcp_mock.py"]
+  command: ["python3", "/app/ticket_mcp.py"]
   args: ["--http", "8080", "--host", "0.0.0.0", "--data-root", "/data"]
   env: []
   port: 8080           # the Service and the ingress NetworkPolicy target this
   resources: {}
   # Optional bearer auth for the HTTP transport (kubernetes/mcp.md's "bearer
   # token in the hub's headers"). The Secret is mounted read-only at
-  # /var/run/mcp-auth and --bearer-token-file is appended to args; the mock
+  # /var/run/mcp-auth and --bearer-token-file is appended to args; the server
   # reads the file PER REQUEST, so rotating the Secret needs no restart.
   # The token VALUE never appears here — only the Secret's name.
   auth:

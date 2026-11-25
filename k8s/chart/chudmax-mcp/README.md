@@ -3,8 +3,9 @@
 One chart, one pod, two containers: the **fetcher sidecar** (keeps
 `/data/current` on the newest verified Flux artifact — see the volume contract
 in [`k8s/fetcher/README.md`](../../fetcher/README.md)) and the **MCP server
-container**, which by default is this repo's own **mock ticket server**
-([`k8s/tickets-mcp-mock/`](../../tickets-mcp-mock/)).
+container**, which by default is this repo's **published canonical ticket server**
+([`k8s/tickets-mcp/`](../../tickets-mcp/) — the source-of-truth server's own file,
+byte-exact, on the fixed per-call contract).
 
 ## The default install
 
@@ -12,8 +13,8 @@ container**, which by default is this repo's own **mock ticket server**
 helm install <release> k8s/chart/chudmax-mcp
 ```
 
-The default values run the mock in pod mode: `--http 8080 --host 0.0.0.0
---data-root /data`. Every mock call rereads `/data/current` and its
+The default values run the server in pod mode: `--http 8080 --host 0.0.0.0
+--data-root /data`. Every server call rereads `/data/current` and its
 `artifact.json`, so a fetcher swap is visible on the next call without a
 restart. Before the ExternalArtifact exists (the `k8s/repo-sync/` work
 creates it), the fetcher WAITS — logging and retrying every resync period, no
@@ -21,15 +22,15 @@ crash-loop — and self-heals when the artifact appears. The readiness probe is
 honest about the wait: the pod is ready only once `/data/current` exists.
 
 Both default image tags (`ghcr.io/urmanac/chudmax/fetcher:0.1.0`,
-`ghcr.io/urmanac/chudmax/tickets-mock:0.1.0`) are unpublished until the
+`ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0`) are unpublished until the
 phase-10 publishing milestone — build and load them yourself meanwhile:
 
 ```
 podman build --platform linux/amd64,linux/arm64 \
   --manifest ghcr.io/urmanac/chudmax/fetcher:0.1.0 -f k8s/image/Dockerfile k8s
 podman build --platform linux/amd64,linux/arm64 \
-  --manifest ghcr.io/urmanac/chudmax/tickets-mock:0.1.0 \
-  -f k8s/tickets-mcp-mock/Dockerfile k8s/tickets-mcp-mock
+  --manifest ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0 \
+  -f k8s/tickets-mcp/Dockerfile k8s/tickets-mcp
 ```
 
 ## Bring your own server
@@ -58,7 +59,7 @@ credentials it did not ask for.
 
 `server.auth.{enabled,secretName,secretKey}`: when enabled, the chart mounts
 the Secret read-only at `/var/run/mcp-auth` and appends
-`--bearer-token-file /var/run/mcp-auth/<key>` to the server's args. The mock
+`--bearer-token-file /var/run/mcp-auth/<key>` to the server's args. The server
 reads the file PER REQUEST, so rotating the Secret needs no restart. The
 token VALUE never appears in values — only the Secret's name. (The bearer
 token is what `kubernetes/mcp.md` specifies for the hub-facing deployment:
