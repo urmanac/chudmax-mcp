@@ -121,6 +121,10 @@ podcurl() { # podcurl <name> <curl-args...> — a probe pod whose OUTPUT is read
   [ "$phase" = "Succeeded" ] || [ "$phase" = "Failed" ] || echo "  podcurl: pod $name never completed (phase=${phase:-none})" >&2
   local out
   out="$(kubectl logs "$name" -n "$NS" 2>/dev/null || true)"
+  if [ -z "$out" ]; then
+    echo "  podcurl: no output from $name (phase=${phase:-none})" >&2
+    kubectl describe pod "$name" -n "$NS" 2>/dev/null | tail -n 12 >&2 || true
+  fi
   kubectl delete pod "$name" -n "$NS" --ignore-not-found --wait=false >/dev/null 2>&1 || true
   printf '%s' "$out"
 }
@@ -224,16 +228,24 @@ echo "  web: Ready;  mcp: Running (the fetcher not-ready is EXPECTED pre-artifac
 say "8. helm test (the engine hook through the Service + the web hook)"
 helm test chudmax -n "$NS"
 
-say "9. mcp receipts (HTTP over the Service, from a pod in the release namespace)"
-INIT=$(podcurl mcp-init curl -s -m 10 -X POST -H 'Content-Type: application/json' \
+say "9. mcp receipts (the server's port, pod-to-pod)"
+MCP_POD_IP="$(kubectl get pod -n "$NS" -l app.kubernetes.io/name=mcp -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)"
+[ -n "$MCP_POD_IP" ] || die "no mcp pod IP resolved (the alias-labeled pod is missing?)"
+# The POD port, not the Service: a Service admits only READY pods, and the
+# fetcher sidecar is not-ready pre-artifact BY DESIGN (the honest no-data
+# state) - the ready-gated Service path is phase 5's rehearsal's proof. The
+# ingress policy admits same-namespace pods, which this probe is.
+INIT=$(podcurl mcp-init curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-  http://chudmax-mcp:8080/mcp)
-echo "$INIT" | grep -q '"chudmax-tickets"' || die "initialize did not answer chudmax-tickets: $INIT"
+  "http://$MCP_POD_IP:8080/mcp")
+echo "$INIT" | grep -q '"chudmax-tickets"' || { kubectl logs deploy/chudmax-mcp -n "$NS" -c server --tail=20 >&2 2>/dev/null || true; die "initialize did not answer chudmax-tickets: $INIT"; }
 echo "  initialize → 200, serverInfo: $(echo "$INIT" | grep -o '"serverInfo":{[^}]*}')"
-LIST=$(podcurl mcp-list curl -s -m 10 -X POST -H 'Content-Type: application/json' \
+LIST=$(podcurl mcp-list curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_tickets","arguments":{}}}' \
-  http://chudmax-mcp:8080/mcp)
+  "http://$MCP_POD_IP:8080/mcp")
 echo "  list_tickets (the honest no-data body): $LIST"
+MCP_EP="$(kubectl get endpoints chudmax-mcp -n "$NS" -o jsonpath='{.subsets}' 2>/dev/null || true)"
+echo "  the Service's endpoint set pre-artifact: ${MCP_EP:-empty} (the ready-gate excludes the pod by design)"
 
 say "10. the fetcher-log assertion: an apiserver round-trip, not a policy block"
 fetcher_404() {
@@ -269,6 +281,9 @@ echo "  images loaded: $WEB_IMAGE $FETCHER_IMAGE $SERVER_IMAGE (amd64; no regist
 echo "  engine endpoint: $ENGINE_HOST:8080 (route: $EN_ROUTE)"
 echo "  policy rung: $RUNG"
 echo "  hooks: engine /health via the Service = PASS; web /health via the Service = PASS"
+echo "  mcp: server 200 (initialize) on the POD port; the Service's endpoint set is"
+echo "  empty pre-artifact by design (the fetcher's ready-gate) - the ready-gated"
+echo "  Service path is phase 5's rehearsal's proof, not this one's."
 echo "  HONEST FRAMING: this proves the Service→EndpointSlice→external-host path against a mock engine"
 echo "  (the same Strata image, --engine mock, outside the pod network — the winning route is recorded above) - NOT the real engine;"
 echo "  the real address arrives with phase 11's private deployment values and reruns the same hook."
