@@ -1,0 +1,15 @@
+# The fetcher's one permission: read the named ExternalArtifact
+# (get covers the self-healing startup read, watch the live stream).
+# Phase 4 may revisit this for the "smallest Role" answer.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "chudmax-mcp.fullname" . }}
+  labels:
+    {{- include "chudmax-mcp.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["externalartifacts"]
+    verbs: ["get", "watch"]
+    resourceNames:
+      - {{ .Values.externalArtifact.name | quote }}

@@ -1,0 +1,50 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default-deny egress, with exactly what the fetcher sidecar needs: DNS, the
+# kube-apiserver (the watch client), and source-controller's artifact server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "chudmax-mcp.fullname" . }}-egress
+  labels:
+    {{- include "chudmax-mcp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "chudmax-mcp.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.egress.dns.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.egress.dns.selector | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- with .Values.networkPolicy.egress.apiServer.cidr }}
+    # the kube-apiserver: the fetcher's controller-runtime client watches over 443
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+    # source-controller: the artifact tarball's home (status.artifact.url)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.egress.sourceController.namespace }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.egress.sourceController.port }}
+    {{- with .Values.networkPolicy.egress.extra }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

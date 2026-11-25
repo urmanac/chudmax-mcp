@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "chudmax-mcp.fullname" . }}
+  labels:
+    {{- include "chudmax-mcp.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "chudmax-mcp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chudmax-mcp.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "chudmax-mcp.serviceAccountName" . }}
+      containers:
+        - name: fetcher
+          image: {{ include "chudmax-mcp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - watch
+            - --namespace
+            - $(POD_NAMESPACE)
+            - --name
+            - {{ .Values.externalArtifact.name | quote }}
+            - --root
+            - {{ .Values.fetcher.root }}
+            - --resync
+            - {{ .Values.fetcher.resync }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.fetcher.root }}
+          readinessProbe:
+            # /data/current exists once the first verified artifact has been
+            # swapped in; before that the sidecar is not ready (honest state).
+            exec:
+              command: ["test", "-e", "{{ .Values.fetcher.root }}/current"]
+          resources:
+            {{- toYaml .Values.fetcher.resources | nindent 12 }}
+        {{- if .Values.server.enabled }}
+        - name: server
+          image: "{{ .Values.server.image.repository }}:{{ .Values.server.image.tag }}"
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          {{- with .Values.server.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.server.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.server.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          automountServiceAccountToken: {{ .Values.server.automountServiceAccountToken }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.server.port }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.fetcher.root }}
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: {{ .Values.volume.sizeLimit }}

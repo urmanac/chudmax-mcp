@@ -1,0 +1,82 @@
+# Default values for the chudmax-mcp chart.
+# The image ships the fetcher only; the pod's MCP server is bring-your-own.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  # The fetcher image. NOTE: this tag is unpublished until the phase-10
+  # publishing milestone — until then build/load the image yourself
+  # (podman build --platform linux/amd64,linux/arm64 --manifest
+  # <registry>/<name>:<tag> -f k8s/image/Dockerfile k8s).
+  repository: ghcr.io/urmanac/chudmax/mcp
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+  # Optional: pin by digest instead of tag (digest wins when set).
+  digest: ""
+
+# The ONE ExternalArtifact the fetcher is allowed to read (Role: get, watch).
+# The chart does not create it — the k8s/repo-sync work owns it (phase 4).
+# Until it exists, the fetcher container exits and restarts with backoff
+# (its startup read is fatal by design); it self-heals once the artifact appears.
+externalArtifact:
+  name: chudmax-tickets
+
+fetcher:
+  root: /data
+  resync: 1m
+  resources: {}
+
+# Bring your own MCP server. Disabled by default: the chart ships the fetcher
+# sidecar only. When enabled, this container runs YOUR image, mounts the same
+# shared volume, and reads the volume contract documented in
+# k8s/fetcher/README.md (revisions/, the `current` symlink swapped atomically,
+# artifact.json beside every tree) — rereading through the symlink on every
+# call, no restarts.
+server:
+  enabled: false
+  image:
+    repository: ""     # required when enabled
+    tag: ""
+    pullPolicy: IfNotPresent
+  command: []          # required when enabled (the user image's entrypoint rarely suffices)
+  args: []
+  env: []
+  port: 8080           # the Service (when enabled) and the ingress NetworkPolicy target this
+  automountServiceAccountToken: false
+  resources: {}
+
+service:
+  enabled: true        # rendered only when server.enabled — nothing points at a disabled pod
+  type: ClusterIP
+
+volume:
+  sizeLimit: 1Gi
+
+networkPolicy:
+  enabled: true
+  # Pod-level caveat: NetworkPolicy podSelectors hit ALL containers in the pod.
+  # A server container with other egress needs adjusts the passthroughs below
+  # or disables the policies entirely.
+  egress:
+    dns:
+      namespace: kube-system
+      selector:
+        k8s-app: kube-dns
+    # The fetcher's watch client (controller-runtime) talks to the
+    # kube-apiserver over 443 — the easy-to-miss rule. Set it to your
+    # cluster's service CIDR (kubeadm default below).
+    apiServer:
+      cidr: 10.96.0.0/12
+    # Where the artifact tarballs come from (status.artifact.url points here).
+    # Match your platform's Flux install (the phase-12 inventory walks it).
+    sourceController:
+      namespace: flux-system
+      port: 80
+    extra: []
+  # Ingress is rendered only when server.enabled — the fetcher listens nowhere.
+  ingress:
+    # Extra allowed sources for the server port (same-namespace pods are
+    # always admitted). Each entry is a NetworkPolicyPeer (namespaceSelector
+    # and/or podSelector).
+    extra: []

@@ -1,0 +1,19 @@
+{{- if and .Values.server.enabled .Values.service.enabled }}
+# The optional server container's front door. Rendered only when the server is
+# enabled — the fetcher listens nowhere; placement phases (pointer Service,
+# Gateway/MetalLB) hang their wiring off this.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "chudmax-mcp.fullname" . }}
+  labels:
+    {{- include "chudmax-mcp.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "chudmax-mcp.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.server.port }}
+      targetPort: http
+{{- end }}

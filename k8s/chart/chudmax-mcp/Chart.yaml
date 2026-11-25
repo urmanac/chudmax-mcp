@@ -1,0 +1,9 @@
+apiVersion: v2
+name: chudmax-mcp
+description: >-
+  The ChudMax MCP pod: the artifact-fetcher sidecar that keeps a shared volume
+  current with what Flux serves. Bring your own MCP server — an optional,
+  values-driven second container reads the same volume.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
