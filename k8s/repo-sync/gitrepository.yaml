@@ -1,0 +1,24 @@
+# The Flux source for the ticket server's data: the private source-of-truth
+# repo's main. The GitRepository artifact stays complete — the narrowing to
+# the data files happens per-consumer in the ArtifactGenerator
+# (artifactgenerator.yaml), so the same source can feed the cluster's own
+# reconciliation later without interference.
+#
+# The auth Secret is created out-of-band (phase-12 human milestone) — an SSH
+# deploy key with a pinned host key (keys: identity, known_hosts) or an HTTPS
+# token (keys: username, password). No credential ever lands in a manifest.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: chudmax-source
+spec:
+  # The private source-of-truth repo's HTTPS URL. Placeholder until a session
+  # with provider access fills it — the URL itself is public-safe per the
+  # owner's ruling (a URL is not a credential); only ever replace it, never
+  # add credentials here.
+  url: https://git.example.com/group/chudmax-source.git
+  ref:
+    branch: main
+  interval: 1m
+  secretRef:
+    name: chudmax-repo-auth

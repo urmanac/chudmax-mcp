@@ -1,0 +1,26 @@
+# Push webhook: GitLab fires "Push Hook" (the exact X-Gitlab-Event header
+# value), notification-controller compares the X-Gitlab-Token header with the
+# Secret's `token` key, and a match triggers the GitRepository's reconcile.
+#
+# The webhook URL is <notification-ingress> + .status.webhookPath (the path
+# format is /hook/sha256sum(token+name+namespace)); wiring that ingress is
+# the phase-12 webhook-route decision (DMZ vs Tailscale Funnel vs relay vs
+# interval-only). Until a path exists this Receiver is inert — and the 1m
+# GitRepository interval carries freshness without it. A feature-branch push
+# also triggers a reconcile that fetches main and no-ops; harmless.
+#
+# The token Secret is created out-of-band, referenced by name only.
+apiVersion: notification.toolkit.fluxcd.io/v1
+kind: Receiver
+metadata:
+  name: chudmax-repo
+spec:
+  type: gitlab
+  events:
+    - "Push Hook"
+  secretRef:
+    name: webhook-token
+  resources:
+    - apiVersion: source.toolkit.fluxcd.io/v1
+      kind: GitRepository
+      name: chudmax-source

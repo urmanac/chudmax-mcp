@@ -1,0 +1,39 @@
+# Outbound notifications. The Flux controllers emit Kubernetes Events (new
+# artifacts, failures); the Alert matches them — GitRepository and
+# ArtifactGenerator at `info` severity, so both artifact updates and failures
+# are heard — and the Provider forwards each match to the human's channel.
+#
+# Where alerts land: in-cluster they are always visible in `kubectl events`
+# and the controllers' stdout logs; the Alert+Provider pair is what gets them
+# OUT of the cluster to a human-chosen endpoint, so a silent or broken sync
+# is heard, not just logged. Outbound only — no ingress needed, so this works
+# regardless of the webhook-route decision.
+#
+# The channel address lives in the Secret (key: address). At phase 12 the
+# human swaps `type` for the chat they want (slack, discord, teams, telegram,
+# ...) and adds the keys that provider wants (usually token). Secrets are
+# created out-of-band, referenced by name only.
+apiVersion: notification.toolkit.fluxcd.io/v1
+kind: Alert
+metadata:
+  name: chudmax-source-alerts
+spec:
+  providerRef:
+    name: chudmax-notifications
+  eventSeverity: info
+  eventSources:
+    - kind: GitRepository
+      name: chudmax-source
+    - kind: ArtifactGenerator
+      name: chudmax-narrow
+---
+apiVersion: notification.toolkit.fluxcd.io/v1
+kind: Provider
+metadata:
+  name: chudmax-notifications
+spec:
+  type: generic
+  # With no spec.address set, the controller reads the webhook address from
+  # the referenced Secret's `address` key — the manifest never carries it.
+  secretRef:
+    name: chudmax-notifications-credentials

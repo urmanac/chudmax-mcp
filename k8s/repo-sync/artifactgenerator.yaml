@@ -1,0 +1,38 @@
+# The narrowed artifact: from the GitRepository's full artifact, copy ONLY
+# the ticket-server data into a generated ExternalArtifact named
+# `chudmax-tickets` — the exact object the chart's fetcher sidecar watches
+# (values externalArtifact.name). Content-hash revision: the pod re-fetches
+# only when this narrowed set changes, not on every repo commit.
+#
+# `optional` is deliberately NOT set (defaults to false): a missing narrowed
+# file fails the generation loudly (and fires an Alert) instead of shipping
+# an incomplete set silently.
+#
+# Requires source-watcher on the platform (Flux >= 2.7.2, bootstrapped with
+# --components-extra=source-watcher). The fallback — the GitRepository's own
+# artifact narrowed by spec.ignore, consumed via a small fetcher extension —
+# is documented in README.md and chosen only if the phase-12 platform
+# inventory rules out source-watcher.
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata:
+  name: chudmax-narrow
+spec:
+  sources:
+    - alias: repo
+      kind: GitRepository
+      name: chudmax-source
+  artifacts:
+    - name: chudmax-tickets
+      # Keep the original git commit in the artifact metadata for
+      # traceability, without affecting the content-hash revision.
+      originRevision: "@repo"
+      copy:
+        - from: "@repo/tickets.md"
+          to: "@artifact/"
+        - from: "@repo/STATE.md"
+          to: "@artifact/"
+        - from: "@repo/docs/**"
+          to: "@artifact/docs/"
+        - from: "@repo/decisions/**"
+          to: "@artifact/decisions/"
