@@ -1,0 +1,71 @@
+# The phase-3 CI re-proof: the chart lints and templates, the image builds for
+# both architectures. No registry push — publishing is a later milestone.
+#
+# The image build is emulation-free (the Dockerfile pins both RUN-bearing
+# stages to $BUILDPLATFORM and cross-compiles the Go binary), so no qemu is
+# needed here. An arm64 *runtime* smoke needs binfmt + qemu-user-static on the
+# runner; it was proven off-CI and stays out of this workflow.
+#
+# Fallback if podman-in-Actions ever frictions out: swap the image job to
+# docker buildx (docker/setup-buildx-action) — same Dockerfile, same platforms.
+
+name: image-chart
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - name: lint
+        run: helm lint k8s/chart/chudmax-mcp
+      - name: template (defaults - server disabled)
+        run: helm template rel k8s/chart/chudmax-mcp
+      - name: template (server enabled, custom values)
+        run: |
+          helm template rel k8s/chart/chudmax-mcp \
+            --set server.enabled=true \
+            --set server.image.repository=example.com/my-server \
+            --set server.image.tag=1.0 \
+            --set server.command[0]=/bin/my-server \
+            --set externalArtifact.name=my-artifact \
+            --set server.port=9090
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman
+      - name: build the manifest list (amd64 + arm64, no push)
+        run: >
+          podman build --platform linux/amd64,linux/arm64
+          --manifest ci-check:0.1.0
+          -f k8s/image/Dockerfile k8s
+      - name: verify both architectures are in the list
+        run: |
+          podman manifest inspect ci-check:0.1.0 | grep -c '"architecture": "arm64"'
+          podman manifest inspect ci-check:0.1.0 | grep -c '"architecture": "amd64"'
+      - name: amd64 fetch smoke (the volume contract)
+        run: |
+          mkdir -p /tmp/smoke/srv
+          printf 'hello tickets\n' > /tmp/smoke/srv/tickets.md
+          tar -C /tmp/smoke/srv -czf /tmp/smoke/srv/tickets.tar.gz tickets.md
+          DIGEST=sha256:$(sha256sum /tmp/smoke/srv/tickets.tar.gz | cut -d' ' -f1)
+          nohup python3 -m http.server 8080 --bind 127.0.0.1 --directory /tmp/smoke/srv \
+            >/tmp/smoke/httpd.log 2>&1 &
+          sleep 1
+          podman run --rm --network host -v smokedata:/data ci-check:0.1.0 \
+            fetch --url http://127.0.0.1:8080/tickets.tar.gz \
+            --digest "$DIGEST" --root /data
+          podman run --rm -v smokedata:/data alpine:3.21 \
+            sh -c 'test -L /data/current && test -f /data/current/artifact.json && echo volume-contract OK'
