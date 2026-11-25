@@ -41,6 +41,7 @@ README for what that means in practice.
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import re
 import subprocess
@@ -170,12 +171,20 @@ class MockStore:
     def __init__(self, tickets_path: Path, data_root: Path | None = None,
                  revision: str | None = None, artifact_produced: str | None = None,
                  artifact_unpacked: str | None = None):
-        self.tickets_path = tickets_path  # opened per call; never resolved at startup
+        # Plain-file mode: resolve ONCE at startup - there is no symlink churn
+        # behind a plain path, and the startup resolve is what makes a relative
+        # --tickets (the .pi/mcp.json launch shape) work from any cwd (Fable's
+        # second finding). Pod mode stores the symlink path UNRESOLVED; the
+        # base is resolved at the START of each call instead (the per-call
+        # snapshot). Resolving the whole tree at startup in pod mode was the
+        # original sin this card fixes; refusing per-call reads was the
+        # regression Fable caught in the fix.
+        self.tickets_path = tickets_path.resolve()
         self.data_root = data_root        # pod mode: <root>/current is the tree
         self.revision = revision          # fallback facts, when no fetcher handed us a volume
         self.artifact_produced = artifact_produced
         self.artifact_unpacked = artifact_unpacked
-        self.git_root = self._find_git_root(tickets_path)
+        self.git_root = self._find_git_root(self.tickets_path)
 
     @staticmethod
     def _find_git_root(path: Path) -> Path | None:
@@ -185,10 +194,17 @@ class MockStore:
         return None
 
     def base(self) -> Path:
-        """The tree a call reads from. In pod mode the symlink path itself - a swap is
-        picked up on the very next call."""
+        """The tree this call reads from - a per-call snapshot in pod mode.
+
+        In pod mode the symlink is resolved ONCE here, at the start of the
+        call, and every read in the call goes through that resolved directory:
+        a fetcher swap mid-call is invisible until the next call (one call
+        never mixes two revisions), and the next call picks the swap up. The
+        doc reads must resolve too - an unresolved symlink base can never
+        contain a resolved candidate, so every read_doc would refuse (Fable's
+        first finding on the phase-4b fix)."""
         if self.data_root is not None:
-            return self.data_root / "current"
+            return (self.data_root / "current").resolve()
         return self.tickets_path.parent
 
     def label(self) -> str:
@@ -205,15 +221,16 @@ class MockStore:
         return found
 
     def ticket_text(self) -> str:
-        # Pod mode reads <current>/tickets.md; the bundled file is the no-fetcher mode.
+        # Pod mode reads the snapshot's tickets.md; the bundled file is the
+        # no-fetcher mode (resolved at startup).
         path = (self.base() / "tickets.md") if self.data_root is not None else self.tickets_path
         try:
             return path.read_text(encoding="utf-8")
         except OSError:
             return ""
 
-    def parse_tickets(self) -> list[dict]:
-        body = self.ticket_text()
+    def parse_text(self, body: str) -> list[dict]:
+        """The parser over a given body - lets a call parse the ONE snapshot it resolved."""
         heads = list(TICKET_RE.finditer(body))
         out = []
         for i, m in enumerate(heads):
@@ -226,9 +243,25 @@ class MockStore:
                         "purpose": " ".join(purpose.group(1).split()) if purpose else ""})
         return out
 
+    def parse_tickets(self) -> list[dict]:
+        return self.parse_text(self.ticket_text())
+
     def count_by_status(self) -> dict:
         counts: dict = {}
         for t in self.parse_tickets():
+            key = t["fields"].get("status", "?")
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    def status_counts_in_snapshot(self, base: Path) -> dict:
+        """Ticket counts from ONE resolved snapshot (used by pod-mode repo_facts,
+        so the facts and the counts cannot straddle a mid-call swap)."""
+        try:
+            body = (base / "tickets.md").read_text(encoding="utf-8")
+        except OSError:
+            body = ""
+        counts: dict = {}
+        for t in self.parse_text(body):
             key = t["fields"].get("status", "?")
             counts[key] = counts.get(key, 0) + 1
         return counts
@@ -262,9 +295,11 @@ class MockStore:
     def repo_facts(self) -> str:
         by_status = f"tickets by status: {json.dumps(self.count_by_status(), sort_keys=True)}\n"
         if self.data_root is not None:
+            base = self.base()  # ONE resolved snapshot for the whole call
+            by_status = ("tickets by status: "
+                         + json.dumps(self.status_counts_in_snapshot(base), sort_keys=True) + "\n")
             try:
-                meta = json.loads(
-                    (self.data_root / "current" / "artifact.json").read_text(encoding="utf-8"))
+                meta = json.loads((base / "artifact.json").read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as e:
                 return (f"artifact facts: none yet ({type(e).__name__} reading "
                         f"{self.label()}/artifact.json)\n" + by_status +
@@ -487,8 +522,10 @@ def serve_http(store: MockStore, host: str, port: int, token_file: str | None) -
                 return True
             expected = bearer_token(token_file)
             got = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
-            # Fail closed: an unreadable token file rejects everything.
-            return expected is not None and expected != "" and got == expected
+            # Fail closed: an unreadable token file rejects everything; the
+            # compare is constant-time (Fable's micro).
+            return (expected is not None and expected != ""
+                    and hmac.compare_digest(got.encode("utf-8"), expected.encode("utf-8")))
 
         def do_POST(self) -> None:
             if not self._authorized():

@@ -41,10 +41,11 @@ def text_of(body: str) -> str:
 class StdioSession:
     """The mock over stdio: send lines, get one reply per valid line, keyed by id."""
 
-    def __init__(self, extra_args: list | None = None):
+    def __init__(self, extra_args: list | None = None, cwd: str | None = None):
         self.proc = subprocess.Popen(
             [sys.executable, str(SERVER), *(extra_args or [])],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            cwd=cwd)
 
     def ask(self, reqs: list) -> dict:
         """Send one JSON object per line; return replies keyed by their id."""
@@ -324,8 +325,11 @@ def pod_volume(dest: Path, status2: str, origin: bool) -> dict:
                 dest / "docs" / "example-queue-wiring.md")
     # The revision's own edit: the status the swap should make visible.
     tickets = (dest / "tickets.md").read_text().replace("**Status:** open", f"**Status:** {status2}")
-    (dest / "tickets.md").write_text(tickets)
     tag = dest.name
+    (dest / "tickets.md").write_text(tickets)
+    # The revision's own doc content: the swap must change what read_doc serves.
+    (dest / "docs" / "note.md").write_text(
+        f"# a mock doc\nthe {tag} revision's doc content\n")
     meta = {"url": "https://artifact-server.example/chudmax-tickets.tar.gz",
             "revision": f"latest@sha256:{tag * 8}", "digest": f"sha256:{tag * 8}",
             "produced": "2026-11-25T15:00:00Z", "unpacked": "2026-11-25T15:00:01Z",
@@ -363,6 +367,8 @@ def pod_checks(checks: list) -> None:
                        facts.splitlines()[0] if facts else "empty"))
         status, listing = h.call("list_tickets")
         v1_open = " open " in listing
+        status, doc = h.call("read_doc", {"name": "docs/note.md"})
+        v1_doc = status == 200 and "refused" not in doc and f"the {tag1} revision's doc" in doc
 
         tmp = root / ".current.tmp"
         tmp.symlink_to(Path("revisions") / tag2)
@@ -370,19 +376,25 @@ def pod_checks(checks: list) -> None:
 
         status, listing = h.call("list_tickets")
         v2_content = " done " in listing and " open " not in listing
+        status, doc = h.call("read_doc", {"name": "docs/note.md"})
+        v2_doc = status == 200 and "refused" not in doc and f"the {tag2} revision's doc" in doc
         status, facts = h.call("repo_facts")
-        checks.append(("pod sees v2 after a swap, no restart",
+        checks.append(("pod sees v2 after a swap, no restart (facts, tickets, and docs)",
                        status == 200 and f"digest: sha256:{tag2 * 8}" in facts
                        and "origin revision: main@sha1:" + "c" * 40 in facts
-                       and v1_open and v2_content,
-                       f"HTTP {status}; open before: {v1_open}, done after: {v2_content}"))
+                       and v1_open and v2_content and v1_doc and v2_doc,
+                       f"HTTP {status}; open before: {v1_open}, done after: {v2_content}, "
+                       f"doc v1: {v1_doc}, doc v2: {v2_doc}"))
 
         shutil.rmtree(root / "revisions" / tag1)  # retention prunes the starting revision
         status, listing = h.call("list_tickets")
         ok_list = status == 200 and "T-0002" in listing
+        status, doc = h.call("read_doc", {"name": "docs/note.md"})
+        ok_doc = status == 200 and "refused" not in doc and f"the {tag2} revision's doc" in doc
         status, facts = h.call("repo_facts")
-        checks.append(("pod still answers after v1 is pruned",
-                       ok_list and status == 200 and f"digest: sha256:{tag2 * 8}" in facts,
+        checks.append(("pod still answers after v1 is pruned (tickets, docs, facts)",
+                       ok_list and ok_doc and status == 200
+                       and f"digest: sha256:{tag2 * 8}" in facts,
                        f"HTTP {status}"))
     finally:
         if h is not None:
@@ -464,6 +476,53 @@ def hygiene_checks(checks: list) -> None:
     checks.append(("fixture hygiene: the denylist is clean", clean, where or "all fixture files"))
 
 
+def relative_launch_checks(checks: list) -> None:
+    """The .pi/mcp.json launch shape, locked forever: cwd = the tree root, a
+    RELATIVE --tickets tickets.md. Fable's regression: the phase-4b fix dropped
+    the startup resolve, and read_doc AGENTS.md refused everything for exactly
+    this launch. Integration-shaped on purpose - scratch copy, fake tree, real
+    launch flags."""
+    tree = Path(tempfile.mkdtemp(prefix="mock-selftest-relaunch-"))
+    (tree / ".git").mkdir()
+    (tree / "docs").mkdir()
+    (tree / "tickets.md").write_text(
+        "## T-9001 - Example: the relative launch\n\n**Status:** open\n\n**Purpose:**\n"
+        "Exercises the plain-file mode the way pi launches the canonical server.\n\n---\n")
+    (tree / "AGENTS.md").write_text("# the tree's agents file\nread_doc must reach me\n")
+    (tree / "docs" / "note.md").write_text("# doc\nrelative launch content\n")
+    s = StdioSession(["--tickets", "tickets.md"], cwd=str(tree))  # launched FROM the tree root
+    try:
+        keyed = s.ask([
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "read_doc", "arguments": {"name": "AGENTS.md"}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "read_doc", "arguments": {"name": "docs/note.md"}}},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+             "params": {"name": "list_docs", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+             "params": {"name": "repo_facts", "arguments": {}}},
+        ])
+        doc = keyed[1]["result"]["content"][0]["text"]
+        checks.append(("relative launch: read_doc AGENTS.md answers, not refused",
+                       "refused" not in doc and "read_doc must reach me" in doc,
+                       doc[:60]))
+        doc = keyed[2]["result"]["content"][0]["text"]
+        checks.append(("relative launch: read_doc under docs/ answers",
+                       "refused" not in doc and "relative launch content" in doc,
+                       doc[:60]))
+        docs = keyed[3]["result"]["content"][0]["text"]
+        checks.append(("relative launch: list_docs indexes the tree",
+                       "AGENTS.md" in docs and "docs/note.md" in docs and "tickets.md" in docs,
+                       f"{len(docs.splitlines())} entries"))
+        facts = keyed[4]["result"]["content"][0]["text"]
+        checks.append(("relative launch: repo_facts reports the checkout or says so honestly",
+                       "checkout:" in facts or "not inside a git working tree" in facts,
+                       facts.splitlines()[0][:60] if facts else "empty"))
+    finally:
+        s.close()
+        shutil.rmtree(tree, ignore_errors=True)
+
+
 def main() -> int:
     if not SERVER.exists():
         print(f"FAIL: {SERVER} not found")
@@ -472,6 +531,7 @@ def main() -> int:
     stdio_checks(checks)
     http_checks(checks)
     pod_checks(checks)
+    relative_launch_checks(checks)
     fallback_flags_checks(checks)
     bearer_checks(checks)
     hygiene_checks(checks)
