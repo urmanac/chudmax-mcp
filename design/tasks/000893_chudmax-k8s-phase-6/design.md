@@ -31,7 +31,7 @@ Phase 6 makes three installable chart surfaces and proves them together on kind.
 ```
 k8s/umbrella/chudmax/
   Chart.yaml            deps (file://): subcharts/chudmax-engine, subcharts/chudmax-web,
-                        ../../../chart/chudmax-mcp (read-only reference); conditions
+                        ../../chart/chudmax-mcp (read-only reference); conditions
   values.yaml           engine endpoint empty default; web Strata values; mcp 4b defaults
   README.md             pins table (Strata SHA + tag), phase-10 OCI note, rehearsal profile
   subcharts/
