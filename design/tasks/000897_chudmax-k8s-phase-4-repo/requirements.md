@@ -26,7 +26,7 @@ Everything happens in the public repo `urmanac/chudmax-mcp`: manifests + README 
 
 ## Acceptance criteria
 
-- [ ] `k8s/repo-sync/gitrepository.yaml`: GitRepository `chudmax-source` — `spec.url` = the private source-of-truth repo's HTTPS URL (public-safe per the steering brief; a placeholder only if the implementing session lacks provider access, then flagged in the PR), `spec.ref.branch: main`, `spec.interval: 1m`, `spec.secretRef.name: chudmax-repo-auth`; **no** `spec.ignore` (the primary route narrows per-consumer).
+- [ ] `k8s/repo-sync/gitrepository.yaml`: GitRepository `chudmax-source` — `spec.url` = the private source-of-truth repo's HTTPS URL (public-safe per the steering brief; a placeholder only if the implementing session lacks provider access, then flagged in the PR — **resolved: real URL verified against the provider tree, see tasks.md**), `spec.ref.branch: main`, `spec.interval: 1m`, `spec.secretRef.name: chudmax-repo-auth`; **no** `spec.ignore` (the primary route narrows per-consumer).
 - [ ] `k8s/repo-sync/artifactgenerator.yaml`: one source (alias `repo` → GitRepository `chudmax-source`); one artifact named `chudmax-tickets` with `originRevision: "@repo"` and copy rules selecting exactly `tickets.md`, `STATE.md`, `docs/**`, `decisions/**`; `optional` stays unset (a missing narrowed file is a loud failure, not a silent skip).
 - [ ] `k8s/repo-sync/receiver.yaml`: Receiver — `type: gitlab`, `events: ["Push Hook"]`, `secretRef.name: webhook-token`, `resources` → the GitRepository.
 - [ ] `k8s/repo-sync/alerts.yaml`: Alert (`providerRef`, `eventSeverity: info` — confirmed by the human, 2026-11-25, eventSources GitRepository + ArtifactGenerator) + Provider (`type: generic`, the channel address read from its Secret).
@@ -34,7 +34,7 @@ Everything happens in the public repo `urmanac/chudmax-mcp`: manifests + README 
 - [ ] README also covers: install (`kubectl -n <ns> apply -f k8s/repo-sync/` — manifests carry no `metadata.namespace`), the same-namespace rule with the chart release, the secret-keys table (`chudmax-repo-auth`, `webhook-token`, the notifications Secret), the webhook-path note (`status.webhookPath`, GitLab "Secret token"), the channel options (generic/slack/discord/teams/telegram — swap `type` + Secret keys), and the egress note (the generated artifact is served by source-watcher's storage server — the chart's `networkPolicy.egress.sourceController` values point at that Service).
 - [ ] `flux schema validate k8s/repo-sync --schema-location default` passes locally and in CI (new workflow, actions pinned to a release; existing workflows stay green) — or the steering brief's equivalent (kubeconform over schemas extracted from the fluxcd CRDs, fetched in the workflow) if flux-schema fights the runner.
 - [ ] No changes to `k8s/fetcher/`, `k8s/chart/`, or `k8s/image/` (the Role answer is "as phase 3 shipped it"; the ExternalArtifact is source-watcher's output, not a shipped manifest).
-- [ ] The box is untouched; work lands via PR to `main` only; the three-labels rule on all claims; no secrets, no real repo URLs, no internal hostnames in the public repo.
+- [ ] The box is untouched; work lands via PR to `main` only; the three-labels rule on all claims; no secrets, no internal proxy hostnames in the public repo — the repo URL itself is public-safe per the owner's ruling (a URL is metadata, not a credential).
 
 ## Out of scope (owned by other phases or decisions)
 
