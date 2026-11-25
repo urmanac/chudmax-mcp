@@ -40,7 +40,7 @@ WORK="$(mktemp -d)"
 ENGINE_HOST=""
 
 say() { printf '\n=== %s ===\n' "$*"; }
-die() { echo "FAIL: $*" >&2; exit 1; }
+die() { echo "FAIL: $*" >&2; echo "::error::FAIL: $*" >&2; exit 1; }
 
 cleanup() {
   say "teardown"

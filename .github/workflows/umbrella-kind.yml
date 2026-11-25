@@ -126,10 +126,16 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq podman
-      - name: the umbrella rehearsal (kind-smoke.sh — the whole proof; the log lands in the run summary so failures are readable without auth)
+      - name: the umbrella rehearsal (kind-smoke.sh — the whole proof; the log tail rides in the annotations so failures are readable without auth)
         run: |
           set -o pipefail
-          bash k8s/umbrella/chudmax/kind-smoke.sh 2>&1 | tee "$GITHUB_STEP_SUMMARY"
+          if ! bash k8s/umbrella/chudmax/kind-smoke.sh 2>&1 | tee "$GITHUB_STEP_SUMMARY"; then
+            echo "::error::the kind rehearsal failed - the log tail follows"
+            tail -n 30 "$GITHUB_STEP_SUMMARY" | cut -c1-600 | nl -ba | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
       - name: the failure receipt
         if: failure()
         run: |
