@@ -59,6 +59,16 @@ Each red run's receipt was read from the **run-summary page** (the workflow's st
 12. **THE SERVICE'S READY-GATE (`ee2e53a`):** a Service admits only READY pods; the fetcher sidecar's readiness probe (`test -e /data/current`) fails pre-artifact BY DESIGN (the honest no-data state), so the mcp Service has NO endpoints in the rehearsal — a Service-URL receipt curl is refused, and `curl -s` (errors silenced, no -w) prints NOTHING to stdout → empty pod logs. The receipts now curl the POD IP (admitted by the ingress policy's same-namespace `podSelector: {}`), record the Service's empty endpoint set as the honest receipt, and use `curl -sS` so the error line lands in the pod logs; a failure also tails the server container's logs.
 - **Meta-lesson for the CI loop:** the receipt-in-step-summary design makes every failure diagnosable from the anonymous web UI — keep the ladder's probe misses printed (403 vs 000 vs empty distinguishes guard/routing/probe-defect in one glance), and never trust a streaming-attached container's stdout (attach races lose it; logs don't).
 
+## Cluster receipts from the CI runs (`handoff-reported`, from the run summaries — 2026-11-25)
+
+These are REAL kind-cluster receipts now (no longer speculation), read from run 45724227062's summary (`ee2e53a`) and its predecessors:
+
+- **The engine hook (the card's "first test of any cluster") PASSED:** `helm test` succeeded — a pod reached `/health` through the selectorless engine Service → EndpointSlice → external host (the docker-bridge gateway route; `route won` recorded in the receipt).
+- **The web hook PASSED** (Strata's `/health` through the web Service, with the allowedHosts default proving the guard).
+- **The mcp receipts LANDED:** `initialize → 200` with `serverInfo` (the published canonical server answering on its port), and `list_tickets` returned the honest no-data body (`{"text": "no tickets found in /data/current"}`). The Service's endpoint set shows the pod under `notReadyAddresses` — the ready-gate receipt, recorded verbatim.
+- **The fetcher-log assertion (in progress at `5337fdf`):** the defaults' apiserver rule blocks on kindnet (receipted); the override ladder now admits both the Service VIP (443) and the control-plane endpoint (443+6443) and restarts the deployment so the fetcher's first list fires immediately.
+- **Steps proven along the way:** the images load (host docker + kind node), the mock engine runs outside kind and answers, the ladder's gateway route wins, the install renders no Cilium objects, the pods wait (web Ready; mcp Running with the fetcher not-ready by design).
+
 ## Flow
 
 - **Merge order (CoS addendum, 2026-11-25, `handoff-reported`):** phase 5 merges first; the phase-6 branch is then **rebased onto `main`** at the CoS's instruction for the final CI run (the `file://` mcp dep consumes the auto-gated 443+6443 apiserver fix on the rebased head); the CoS merges — phase 6 never merges its own PR, and holds even if CI is green while phase 5 is still open. The workbench staging (everything in `chudmax-mcp`, the split to the empty `urmanac/chudmax-engine`/`-web` repos deferred to phase 10) is owner-confirmed.
