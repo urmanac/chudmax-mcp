@@ -26,9 +26,9 @@
 
 **The fetcher (public, same PR)**
 
-- [ ] F6: fix `coreFlags` in `k8s/fetcher/main.go` to assign CoreOpts AFTER `fs.Parse`; regression test parses real flags (`--retries/--keep/--max-download-bytes/--max-untar-bytes`) and asserts the values reach CoreOpts
-- [ ] Kinder startup: `watch.go` startup-Get NotFound → retry with backoff and stay up (other errors still exit loudly); fake-client test covers NotFound-then-success; update NOTES.txt (waiting, not crash-looping)
-- [ ] Origin revision: watch mode reads `status.artifact.metadata["org.opencontainers.image.revision"]` → CoreOpts → `ArtifactMeta.OriginRevision` (`json:"origin_revision,omitempty"`); unit test (present when set, absent when not); `k8s/fetcher/README.md` documents the field (fetch/one-shot mode omits it)
+- [x] F6: fix `coreFlags` in `k8s/fetcher/main.go` to assign CoreOpts AFTER `fs.Parse`; regression test parses real flags (`--retries/--keep/--max-download-bytes/--max-untar-bytes`) and asserts the values reach CoreOpts
+- [x] Kinder startup: `watch.go` startup-Get NotFound → retry with backoff and stay up (other errors still exit loudly); fake-client test covers NotFound-then-success; update NOTES.txt (waiting, not crash-looping)
+- [x] Origin revision: watch mode reads `status.artifact.metadata["org.opencontainers.image.revision"]` → CoreOpts → `ArtifactMeta.OriginRevision` (`json:"origin_revision,omitempty"`); unit test (present when set, absent when not); `k8s/fetcher/README.md` documents the field (fetch/one-shot mode omits it)
 
 **The chart (public, same PR)**
 
