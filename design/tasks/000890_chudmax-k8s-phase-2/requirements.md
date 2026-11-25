@@ -1,5 +1,7 @@
 # Requirements: chudmax k8s phase 2 fetcher sidecar
 
+> **Public mirror** — the full-fidelity record (including deployment specifics) lives in the private source-of-truth repo.
+
 T-0037 phase 2 (`kubernetes/phases.md`): **a sidecar that takes an artifact URL and digest, verifies, unpacks and swaps; tested against a tarball in CI, no cluster needed.** It is the only new code in the plan, and it is not git code: Flux (source-controller) fetches and packs the repo; the sidecar only consumes what Flux serves. Per `kubernetes/repo-sync.md`, it learns the current artifact (URL, revision, digest) by watching the **one** ExternalArtifact it is allowed to read (namespaced Role: `get`, `watch`), downloads the tarball from source-controller over HTTP, checks the digest, unpacks beside the previous copy, and swaps a symlink so a reader never sees half a tree. Flux's own controllers do exactly this with the library in `fluxcd/pkg`; the sidecar uses the same library.
 
 Phase 2 sits at the root of the "make the parts" half and runs parallel with phase 1, which is already delivered (MR !18 merged — verified in `design.md`). Phase 3 packages this binary into the mcp image and chart; phase 4 writes the manifests; phase 5 rehearses on kind. Phase 2 needs no cluster, no image, and touches nothing on the box.

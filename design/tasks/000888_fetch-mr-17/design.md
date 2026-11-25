@@ -1,10 +1,12 @@
 # Design: Evaluate MR 17 Kubernetes Plan Spike
 
+> **Public mirror** — the full-fidelity record (including deployment specifics) lives in the private source-of-truth repo.
+
 This document is the SPIKE itself: the evaluation of MR !17 and the plan-about-the-plan for T-0037. Nothing here is built. Labels follow `chudmax/AGENTS.md`.
 
 ## 1. What MR !17 is (`verified-here` from the mirror branch, re-verified against GitLab)
 
-- **MR !17 confirmed via the GitLab API** (2026-11-25, project secret `GITLAB_SECRET_TOKEN`, Maintainer): iid 17, "Plan: chudmax's home, with Flux keeping the repo current (T-0037)", state `opened`, not draft, `source_branch: plan/kubernetes-home` → `main`, head `d156ed0`, `can_be_merged`, no conflicts. A fresh clone of `gitlab.com/kingdonb/chudmax` has `main` at `70c397e` and `plan/kubernetes-home` at `d156ed0` — byte-identical to what the mirror served before it was detached. Selftest re-run on the MR head from the fresh clone: all checks PASS, exit 0.
+- **MR !17 confirmed via the GitLab API** (2026-11-25, with a project-scoped credential, details private): iid 17, "Plan: chudmax's home, with Flux keeping the repo current (T-0037)", state `opened`, not draft, `source_branch: plan/kubernetes-home` → `main`, head `d156ed0`, `can_be_merged`, no conflicts. A fresh clone of `the private source-of-truth repo` has `main` at `70c397e` and `plan/kubernetes-home` at `d156ed0` — byte-identical to what the mirror served before it was detached. Selftest re-run on the MR head from the fresh clone: all checks PASS, exit 0.
 
 - Source branch `plan/kubernetes-home`, three commits ending at `d156ed0` "Kubernetes plan, third pass: no cluster now, parts first, MetalLB address (T-0037)".
 - Diff vs `main`: six new files in `kubernetes/` (README 107, repo-sync 98, architecture 158, mcp 79, phases 57, personas 32 lines), T-0037 appended to `tickets.md` (+29, making 37 tickets), one STATE.md count line. Docs only — `tools/` untouched.
@@ -38,7 +40,7 @@ This document is the SPIKE itself: the evaluation of MR !17 and the plan-about-t
 
 ## 4. SPIKE part 1 — how many tickets
 
-**19 tickets: 10 for the parts, 8 for placement, 1 conditional Strata-fork ticket.** One per phase, created when the phase starts (the plan's own rule); T-0037 stays the epic until the last phase closes.
+**19 tickets: 10 for the parts, 8 for placement, 1 conditional the fork ticket.** One per phase, created when the phase starts (the plan's own rule); T-0037 stays the epic until the last phase closes.
 
 **Make the parts (10, no cluster needed):**
 
@@ -68,7 +70,7 @@ This document is the SPIKE itself: the evaluation of MR !17 and the plan-about-t
 | Q | 17 | mTLS when the platform's Flux is 2.10 | L |
 | R | 18 | Handover: chudmax carries one release; he proposes tickets thereafter | all |
 
-**Conditional:** **S — web/engine split in the Strata fork** (the harness attaches to an engine at a URL instead of starting one; a brief for the fork's agent). Only created if route A is chosen at phase 15; routes B (`app/host`) or C (thin front) would spawn their own single ticket instead.
+**Conditional:** **S — web/engine split in the fork** (the harness attaches to an engine at a URL instead of starting one; a brief for the fork's agent). Only created if route A is chosen at phase 15; routes B (`app/host`) or C (thin front) would spawn their own single ticket instead.
 
 ## 5. SPIKE part 2 — execution order
 
@@ -112,22 +114,10 @@ Put them somewhere (human names a cluster):
 
 ## 8. Notes for future agents (learnings)
 
-- **Access changed on 2026-11-25 (mid-task):** the GitLab connector was disabled and the repo detached from Helix metadata — the Helix mirror (`origin` at `helix-api.internal:18080`) now answers `403 Access denied` (`verified-here`). Direct GitLab is the path now: a project secret `GITLAB_SECRET_TOKEN` (scopes per the `helix cloud` token: `api, self_rotate, write_repository`, Maintainer) is registered on project `prj_01m69kzv94q3kvr5tpqts2bsda` and is injected into sessions at container creation. **A session started before the secret exists never sees it** — if `printenv GITLAB_SECRET_TOKEN` is empty, a fresh session is required. Use it per-command (`oauth2:$GITLAB_SECRET_TOKEN@gitlab.com/...` for git, `PRIVATE-TOKEN:` header for the API); never write it to disk or into a doc.
-- The evaluation's evidence base predates the detach and is intact in the local checkout: `origin/plan/kubernetes-home` at `d156ed0` and `main` at `70c397e`, fetched from the mirror before it closed. The next session with GitLab access should re-verify MR !17's head against GitLab itself (`GET /api/v4/projects/kingdonb%2Fchudmax/merge_requests/17`).
-- `selftest.py` derives both ticket counts from `tickets.md` itself, so a docs-only MR that adds a ticket still passes; run it against the MR branch in a `git worktree` to prove it without touching the checkout.
-- The plan's phase list in `phases.md` is already ticket-sized (one agent ticket per phase, with A/B parallelizable and I parallelizable); only the conditional fork ticket is an addition the plan implies but does not number.
-
-### The working GitLab recipe (learned 2026-11-25, `verified-here`)
-
-- The credential is the project secret `GITLAB_SECRET_TOKEN` = the rotated `helix cloud` project access token (scopes `api, self_rotate, write_repository`, Maintainer, expires 2026-12-25; the superseded one expires 2026-11-30). It is **injected at container creation only** — a session started before the secret existed never sees it; check `printenv GITLAB_SECRET_TOKEN`, and if empty, restart the session.
-- **API:** `curl -s -H "PRIVATE-TOKEN: $GITLAB_SECRET_TOKEN" https://gitlab.com/api/v4/projects/kingdonb%2Fchudmax/...` — project, MRs, access-token metadata (names/scopes only, values are write-only) all work.
-- **Git over HTTPS** needs the token as the password with **any** username, via a runtime credential helper (keeps the token out of argv-at-rest and off disk entirely):
-  ```
-  git -c "credential.helper=!f() { echo username=oauth2; printf 'password=%s\n' \"\$GITLAB_SECRET_TOKEN\"; }; f" \
-      clone https://gitlab.com/kingdonb/chudmax.git <dir>
-  ```
-  The same `-c` prefix works for `push` to an explicit GitLab URL. The `!f() { ... }; f` wrapper is required — a bare `!echo` helper fails (git gets no `username=` line and reports a misleading auth error).
-- **The Helix mirror is dead** since the detach (`origin` → `403 Access denied` for fetch and push). Push `helix-specs` and feature branches directly to `https://gitlab.com/kingdonb/chudmax.git`. After the detach, `chudmax` also stopped registering as a project worktree: file tools (`read_file`/`edit_file`/`write_file`) only reach `helix-specs` and `incoming`; operate on the code repos with `git -C` and terminal commands, staging file edits through `incoming` scripts if needed.
-- A GitLab-wide commit-msg hook in this container enforces conventional commits (`feat(mcp): ...`) on **every** repo, including chudmax, whose own history predates the hook and does not follow it.
-- **Phase 1 was delivered from this session** (`verified-here`): branch `feat/t0038-ticket-mcp-http` (stacked on MR !17's head), pushed and opened as **MR !18** — `ticket_mcp.py --http` (MCP over HTTP: JSON object per POST to `/mcp`, 202/405/400 semantics) plus pod mode (`--revision`, `--artifact-produced`, `--artifact-unpacked`; `repo_facts` stops asking git), selftest covering both transports (19 checks, all PASS), ticket T-0038 marked done in `tickets.md`, STATE.md count line 38/22-done. **The Chief of Staff's list is therefore 18 tickets, not 19** — phase 1 is already merged-adjacent; only its review/merge remains. Whether the fork's hub accepts the server by `url` is still `speculation` — it is checked on the box at phase 12/14.
-- The plan uses "the box" = the Ubuntu host with the RTX GPU (Strata engine on `:8080`), "the cluster" = wherever Flux runs; the engine chart is a selectorless Service + EndpointSlice pointing at `10.17.12.202:8080`.
+- **Access changed mid-task:** the platform's git connector for the private source-of-truth repo was disabled, and the repo detached from the platform metadata — the Helix git proxy stopped serving it (`verified-here`). Direct provider access became the path via a project-scoped credential, details private, injected into sessions at container creation. **A session started before the credential exists never sees it** — if the environment is empty, a fresh session is required. Git and API calls authenticate over HTTPS with a runtime credential helper; the credential is never written to disk or into a doc.
+- The evaluation's evidence base predates the detach and is intact in the local checkout. The next session with provider access should re-verify the MR head against the provider itself before relying on it.
+- `selftest.py` derives both ticket counts from `tickets.md` itself, so a docs-only change that adds a ticket still passes; run it against a change branch in a `git worktree` to prove it without touching the checkout.
+- The plan's phase list in `phases.md` is already ticket-sized (one agent ticket per phase, with the first two parallelizable); only the conditional fork ticket is an addition the plan implies but does not number.
+- **Phase 1 was delivered from the spike session** (`verified-here`): the ticket server gained MCP over HTTP (one JSON object per POST, 202/405/400 semantics) plus pod mode (`repo_facts` reports the revision it is given and stops asking git), the selftest covers both transports (19 checks, all PASS), the ticket was marked done, and the count line updated. The manager's list is therefore one ticket shorter than the spike counted. Whether the fork's hub accepts the server by `url` stays `speculation` — it is checked on the private deployment at the placement phases.
+- Vocabulary: "the box" = the private deployment's GPU host, "the cluster" = wherever Flux runs; the engine chart is a selectorless Service + EndpointSlice pointing at the host's address on the LAN.
+- **Public-surface rule (added later, human-confirmed):** every push to this repo's `helix-specs` branch is public-safe by construction; full-fidelity notes with deployment specifics live only on the private source-of-truth repo's `helix-specs` branch. Each doc here opens with the public-mirror notice.

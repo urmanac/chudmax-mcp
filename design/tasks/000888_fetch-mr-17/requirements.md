@@ -1,6 +1,8 @@
 # Requirements: Evaluate MR 17 Kubernetes Plan Spike
 
-MR !17 on `gitlab.com/kingdonb/chudmax` (source branch `plan/kubernetes-home`, `verified-here` from the Helix mirror; the MR number itself is `handoff-reported` from the request — this node has no GitLab credentials) is a docs-only proposal: six plan files under `kubernetes/` (README, repo-sync, architecture, mcp, phases, personas), a proposed epic ticket T-0037, and one STATE.md count line. 561 insertions, no code. This task fetches it, evaluates it, runs the selftest, and produces a SPIKE — a plan about the plan. Nothing is built.
+> **Public mirror** — the full-fidelity record (including deployment specifics) lives in the private source-of-truth repo.
+
+MR !17 on `the private source-of-truth repo` (source branch `plan/kubernetes-home`, `verified-here` from the Helix mirror; the MR number itself is `handoff-reported` from the request — this node has no GitLab credentials) is a docs-only proposal: six plan files under `kubernetes/` (README, repo-sync, architecture, mcp, phases, personas), a proposed epic ticket T-0037, and one STATE.md count line. 561 insertions, no code. This task fetches it, evaluates it, runs the selftest, and produces a SPIKE — a plan about the plan. Nothing is built.
 
 ## User stories
 
@@ -20,6 +22,6 @@ MR !17 on `gitlab.com/kingdonb/chudmax` (source branch `plan/kubernetes-home`, `
 
 ## Open Questions
 
-1. **Ticket granularity:** I assumed one ticket per phase (1–18) plus one conditional Strata-fork ticket for the web/engine split (18–19 total). The plan says "each phase gets its own ticket when it starts". Do you want any phase split further (phase 7 canary rehearsal is the largest), or merged (4+5 could be one)?
+1. **Ticket granularity:** I assumed one ticket per phase (1–18) plus one conditional the fork ticket for the web/engine split (18–19 total). The plan says "each phase gets its own ticket when it starts". Do you want any phase split further (phase 7 canary rehearsal is the largest), or merged (4+5 could be one)?
 2. **Pre-creating tickets:** the plan creates each phase's ticket only when that phase starts. Should the spike's ticket list be pre-registered in `chudmax/tickets.md` after this task, or stay in the spike until each phase begins?
 4. **CI capability:** the plan rehearses sync and canary on kind clusters inside CI (phases 5, 7, 8). The repo's `.gitlab-ci.yml` currently only includes the secret-detection template; whether the GitLab runners are privileged (able to run kind) is not addressed anywhere in the plan. Is that already known?
