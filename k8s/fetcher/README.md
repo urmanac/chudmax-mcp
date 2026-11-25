@@ -54,7 +54,9 @@ every time it is asked; nothing restarts.
   admit the sidecar to source-controller only.
 - The core is agnostic about which Flux source made the artifact - the
   GitRepository's own (narrowed by its `ignore` rule) or a generated one; it
-  unpacks whatever tarball the ExternalArtifact points at.
+  unpacks whatever tarball the ExternalArtifact points at. Phase 4 chose the
+  generated one: source-watcher's ArtifactGenerator over the narrowed set,
+  manifests in `k8s/repo-sync/` (the ignore-rule fallback is documented there).
 - The unit tests use a fake client and real HTTP for the tarball; the
   field-selector watch against a real API server is rehearsed on a cluster.
 - mTLS (Flux 2.10): ArchiveFetcher accepts a TLS config; nothing is done now.

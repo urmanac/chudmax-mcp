@@ -60,8 +60,9 @@ helm install chudmax-mcp k8s/chart/chudmax-mcp
 Two things a fresh install does not have yet:
 
 - **The ExternalArtifact.** The chart only needs its name
-  (`externalArtifact.name`) — the repo-sync manifests own it. Until it exists,
-  the fetcher container exits and restarts with backoff (its startup read is
+  (`externalArtifact.name`) — source-watcher's ArtifactGenerator creates it;
+  the manifests live in `k8s/repo-sync/`. Until it exists, the fetcher
+  container exits and restarts with backoff (its startup read is
   fatal by design) and self-heals once the artifact appears.
 - **The published image.** The default tag `ghcr.io/urmanac/chudmax/mcp:0.1.0`
   is unpublished until the publishing milestone. Build it yourself meanwhile:

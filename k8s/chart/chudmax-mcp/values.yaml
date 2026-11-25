@@ -16,9 +16,11 @@ image:
   digest: ""
 
 # The ONE ExternalArtifact the fetcher is allowed to read (Role: get, watch).
-# The chart does not create it — the k8s/repo-sync work owns it (phase 4).
-# Until it exists, the fetcher container exits and restarts with backoff
-# (its startup read is fatal by design); it self-heals once the artifact appears.
+# The chart does not create it — source-watcher's ArtifactGenerator does;
+# the manifests that generate it live in k8s/repo-sync/ (see that README for
+# the install order and the platform requirement). Until it exists, the
+# fetcher container exits and restarts with backoff (its startup read is
+# fatal by design); it self-heals once the artifact appears.
 externalArtifact:
   name: chudmax-tickets
 

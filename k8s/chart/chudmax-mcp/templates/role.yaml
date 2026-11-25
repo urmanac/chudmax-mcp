@@ -1,6 +1,9 @@
 # The fetcher's one permission: read the named ExternalArtifact
 # (get covers the self-healing startup read, watch the live stream).
-# Phase 4 may revisit this for the "smallest Role" answer.
+# Phase 4's answer: this IS the smallest Role — get for the startup read and
+# the resync re-read, watch for the live field-selector stream; no list
+# (the name is pinned), no patch (source-watcher owns the object), no Secret
+# access. See k8s/repo-sync/README.md.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
