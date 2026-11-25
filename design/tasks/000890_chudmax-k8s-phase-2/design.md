@@ -52,6 +52,13 @@ A throwaway spike ran the whole core loop in `/tmp/fetch-spike` (not committed a
 
 What stays `speculation` until a later phase: the narrowed ArtifactGenerator artifact's exact tarball layout (phase 4's question — the core is layout-agnostic), real-API-server watch semantics (field-selector watch; proven against the fake client only — phase 5 rehearses for real), and the in-cluster RBAC wiring (phase 3 manifests it).
 
+## Where this work lives (changed 2026-11-25, after the merge)
+
+- MR !19 (the fetcher sidecar) is merged on `gitlab.com/kingdonb/chudmax` `main` @ `de442410` — durable there (`verified-here`).
+- The project's primary repo moved the same day: **`urmanac/chudmax-mcp` on GitHub** (Helix repo row `code-chudmax-mcp-01m89tvjwc7kvty959ethn6e97`, external_type github, attached via OAuth; the sandbox clone's origin is the Helix proxy `helix-api.internal:18080/git/code-chudmax-mcp-…`). `verified-here` from the Helix API.
+- These helix-specs docs are re-homed on that repo's pre-seeded `helix-specs` branch (rebased onto its init commit, no force); the GitLab `helix-specs` branch stays as the historical record.
+- Going forward: spec docs push to `chudmax-mcp`'s `helix-specs` branch via the proxy origin; whether the old repo's `main` content (tickets, tools, kubernetes plan docs) migrates here is the human's call — deliberately not done by the agent.
+
 ## What this settles
 
 - The last piece of "the repo reaches the ticket server" that isn't Flux's own (`repo-sync.md`): the consuming side exists and is testable without a cluster.
