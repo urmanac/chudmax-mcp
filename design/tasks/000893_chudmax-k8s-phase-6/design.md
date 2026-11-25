@@ -2,81 +2,67 @@
 
 > **Public mirror** — the full-fidelity record (including deployment specifics) lives in the private source-of-truth repo.
 
-Phase 6 makes three installable parts and proves them together on kind. It adds no product logic: the engine chart is a pointer (the engine stays on the box), the web chart is a Deployment/Service shell with a stand-in mock engine, and the umbrella just composes the three existing charts. The one real mechanism under test is the production path: **web pod → selectorless Service → EndpointSlice → endpoint address** — rehearsed against the mock engine because no rehearsal runner can reach the box (`verified-here`: sandbox curl to the card's address exits 7). Requirements in `requirements.md`; the phase-6 row lives in `kubernetes/phases.md` on the private source-of-truth repo (source `design/tasks/000888_fetch-mr-17/design.md`, SPIKE row F).
+Phase 6 makes three installable chart surfaces and proves two of them together on kind. It adds no product logic: the engine chart is a pointer (the engine stays on the box and is never containerized), the web chart is a shell (its image is phase 10's), and the umbrella composes the three charts plus the rehearsal's stand-in. The one real mechanism under test is the production path — **test pod → selectorless Service → EndpointSlice → endpoint** — rehearsed against a stand-in because no rehearsal runner can reach the box (`verified-here`: sandbox curl to the engine address exits 7) and CI runners certainly can't. Requirements in `requirements.md`; the phase-6 row lives in `kubernetes/phases.md` on the private source-of-truth repo (source `design/tasks/000888_fetch-mr-17/design.md`, SPIKE row F); the steering brief (2026-11-25, `handoff-reported`) decides the deltas from this spec's first draft, recorded below.
 
 ## Shape (kind rehearsal)
 
 ```
- kind node (docker)                      address = node IP, resolved pre-install
- ┌───────────────────────────────────────────────────┐
- │  web pod (chudmax-web chart)                      │
- │    engineUrl = http://chudmax-engine:8080 ─────┐  │   ┌──────────────────────────┐
- │  mock-engine pod (hostNetwork :8080) ◄─────────┼──┼───│ chudmax-engine chart     │
- │  mcp pod (fetcher waiting + tickets-mcp server)│  └──►│ Service (no selector)    │
- └───────────────────────────────────────────────────┘     │ EndpointSlice            │
-                                                           │  node IP : 8080          │
-                 helm test hook: curl /health through the Service → 200
-                 (identical probe later against the real engine, phase 11+)
+ kind node (docker)                        chudmax-engine chart
+ ┌──────────────────────────────────────┐  ┌───────────────────────────────────┐
+ │ stand-in pod (hostNetwork :8080) ◄───┼──┤ Service (no selector, port 8080)  │
+ │                                      │  │ EndpointSlice: <node IP>:8080     │
+ │ mcp pod:                             │  └───────────────────────────────────┘
+ │   server (tickets-mcp): up, answers  │                ▲
+ │     HTTP 200 — honest no-data body   │    helm test hook: curl /health → 200
+ │   fetcher: waiting for the           │
+ │     ExternalArtifact (EXPECTED)      │    web: absent — web.enabled=false
+ └──────────────────────────────────────┘         (image pending phase 10)
 ```
 
-The mock engine keeps the real engine's port (8080) so rehearsal values and placement values differ **only in the endpoint address** — the phase-11 cutover of this chart is a one-value change.
+**The honest framing (printed on the receipt):** in CI this proves the Service→EndpointSlice→pod path against a stand-in `/health` endpoint — the real engine is external and unavailable in CI. The rehearsed shape and the real shape differ only in the endpoint address: phase 11 supplies the engine's real address as private deployment values and reruns the same hook.
 
-## Repo layouts
+## Layout (all inside `urmanac/chudmax-mcp` — the parallel-safe file set)
 
 ```
-chudmax-engine/   (first content of the repo)
-  README.md
-  k8s/chart/chudmax-engine/
-    Chart.yaml  values.yaml  templates/{_helpers,service,endpointslice,test-health,NOTES}
-    README.md
-  .github/workflows/chart.yml     lint + template ×2 + kubeconform(rendered)
-
-chudmax-web/      (first content of the repo)
-  README.md
-  k8s/mock-engine/
-    mock_engine.py                python stdlib; /health → 200, permissive catch-all
-    Dockerfile                    COPY-only, non-root, alpine base off 3.21 (4b rule)
-    README.md
-  k8s/chart/chudmax-web/
-    Chart.yaml  values.yaml  templates/{_helpers,deployment,service,
-      mock-engine-deployment,mock-engine-service,test-health,NOTES}  README.md
-  .github/workflows/chart.yml     lint + template ×2 + kubeconform(rendered)
-  .github/workflows/mock-engine-image.yml   podman both arches + amd64 /health smoke
-
-chudmax-mcp/      (umbrella's recommended home — Open Question 1)
-  k8s/umbrella/chudmax/
-    Chart.yaml                    deps: chudmax-engine, chudmax-web, chudmax-mcp (file://)
-    values.yaml                   rehearsal defaults; alias-keyed overrides
-    scripts/fetch-charts.sh       clone 3 repos at pinned SHAs → charts/ (gitignored)
-    scripts/kind-smoke.sh         kind up → install → test → report
-    README.md                     pins table + phase-10 OCI note
-  .github/workflows/umbrella-kind.yml   chart job + kind job (ubuntu-latest, docker provider)
+k8s/engine-chart/          chart root: Chart.yaml, values.yaml, README.md
+                           templates/{_helpers,service,endpointslice,test-health,NOTES.txt}
+k8s/web-chart/             chart root: Chart.yaml, values.yaml, README.md
+                           templates/{_helpers,deployment,service,NOTES.txt}
+k8s/umbrella/              chart root: Chart.yaml (file:// deps), values.yaml, README.md,
+                           kind-smoke.sh, standin/{mock_engine.py,Dockerfile,README.md}
+                           charts/           gitignored — helm dependency build output
+.github/workflows/umbrella.yml   chart job + standin-image job + kind job
 ```
+
+Phase 5 (parallel) owns `.github/workflows/rehearsal*` and its fixtures; the sets are disjoint by construction, helpers are duplicated rather than shared, and the top-level README is deliberately untouched.
 
 ## Key decisions
 
-1. **The engine chart renders no workload — on purpose.** The engine is never containerized (it stays on the GPU box; the box is untouched except phase 14's pointer edit). The chart is the docs' "Service without selector" pattern: Service + manual endpoints. **EndpointSlice** (the modern object, `discovery.k8s.io/v1`) over legacy Endpoints, with the `kubernetes.io/service-name` label. No RBAC (nothing watches anything), no NetworkPolicy (nothing to protect).
-2. **Endpoint address is install-supplied.** `engine.endpoint.host` defaults empty → the chart renders the Service only, with NOTES telling the installer what to set. Rationale: the public-surface rule (no LAN addresses in public artifacts) beats the card's literal wording; the card's address is what phase 11+ supplies as a value. CI template proofs use a TEST-NET placeholder (`203.0.113.10`). The owner can flip this to a baked default (Open Question 2).
-3. **"First test of any cluster" ships as a Helm test hook.** A hook pod curls `/health` through the engine Service (`failFast`, labeled `helm.sh/test`). Same hook, two lifetimes: kind rehearsal (mock endpoint) and phase 11's real run (box endpoint). The hook image is `curlimages/curl` pinned by tag, with the mock-engine image (busybox `wget`) as the pull-free alternative if the runner's egress is a problem.
-4. **The mock engine: minimal, in the web chart, default on.** Python-stdlib single file (the proven tickets-mcp pattern — COPY-only image, no RUN, emulation-free), `/health` → 200 plus a documented catch-all so unmocked engine calls don't break the rehearsal. `mockEngine.enabled` defaults **true** (the 4b out-of-the-box precedent); `mockEngine.hostNetwork` defaults false and the rehearsal sets it true: the mock then listens on the node's :8080, the EndpointSlice names the **node IP** (resolvable before install → one-step `helm install`, no ClusterIP-in-endpoints rejection, port parity with the real engine). Recorded alternatives: NodePort + node IP (robust, no hostNetwork) and mock pod IP (two-step helm install, breaks on pod restart). Reachability pod→node-IP under kind's kindnet is `speculation` until the first run.
-5. **The web Deployment's image default is the real, unpublished tag** (`ghcr.io/urmanac/chudmax/web:0.1.0`) — the mcp chart's exact precedent. The fork's code is private until phase 10, so the kind rehearsal overrides `web.image` with the **mock-engine image as a documented stand-in** (a generic HTTP server answering the probe) — this proves the chart's shape and the web→engine path, never the web app. All web knobs (`port`, `engineUrl`, probe path) are values with defaults labeled as guesses (the fork's facts are private).
-6. **No NetworkPolicies in the engine/web charts this phase** — deliberate deviation from the mcp chart's hardened pattern. The mcp policies serve a known constraint (the fetcher's Flux egress); the web's constraints are unknown until the phase-15 route and the phase-12 CNI inventory, and CNI-dependent egress guesses were the F5 trap. Documented in the chart README; policies arrive with placement.
-7. **Umbrella home: `k8s/umbrella/chudmax/` in chudmax-mcp** (recommended; Open Question 1). Every k8s artifact so far lives there with its CI; phase 5 rehearses beside it; moving to a dedicated repo at phase 10 is cheap. Children are `file://` dependencies (plain Helm cannot fetch from git; OCI chart publishing is phase 10), vendored by `scripts/fetch-charts.sh` at **pinned SHAs** recorded in the README and the workflow env; `charts/` is gitignored so pins live in exactly one place.
-8. **Rehearsal bar.** All three releases `deployed`; web pod Ready (with the stand-in image); the engine-Service `/health` hook passes; the mcp pod's fetcher is **expected to be waiting** (no ExternalArtifact exists — phase 4b's startup fix keeps it alive and honest) and the smoke script records that as a pass-with-note. Phase 5 owns the data-path rehearsal and inherits this umbrella + kind machinery.
-9. **Toolchain mapping.** Podman first for image builds (the standing rule): `podman build --platform linux/amd64,linux/arm64 --manifest …` locally and in the mock-engine image job (docker buildx stays the recorded fallback). The umbrella's kind job builds single-arch (amd64 — the kind node's arch) images to **load**, not publish; the both-arches rule is re-proved per image in the image-owning repos. Local kind runs on the **docker provider** (docker present in-sandbox; the podman provider's rootless-pasta caveats from phase 3 are not worth fighting); CI kind on `ubuntu-latest` is well-precedented and labeled `speculation` until green.
+1. **All of phase 6 lives in chudmax-mcp** (the steering's file-ownership list). The empty `urmanac/chudmax-engine` / `chudmax-web` repos are phase-10 publishing targets, not phase-6 work surfaces — the sandbox clones of them exist but stay untouched. Consequence (simpler than this spec's first draft): the umbrella's dependencies are plain `file://` paths to sibling charts in the same checkout — **no cross-repo pins, no fetch script**; the phase-10 switch to published OCI chart references is a Chart.yaml edit.
+2. **The LAN-address hard rule → TEST-NET-1 default.** `endpoint.host` defaults `192.0.2.1` (TEST-NET-1) with "set this to your engine's address" in values + NOTES; the CI's engine-address variant uses TEST-NET-2 (`198.51.100.10`) to prove the value flows through; the real address lives only in private deployment values (phase 11+). EndpointSlice (modern, `discovery.k8s.io/v1`) over legacy Endpoints — same semantics, the alternative noted in the README; endpoints must not be ClusterIPs (apiserver validation), hence a node IP in the rehearsal.
+3. **The Service is the stable in-cluster name for the external engine** (the steering's alias note): installers point pods and config at `chudmax-engine.<ns>.svc` once; the EndpointSlice is the only thing that changes when the engine moves (phases 11/14). Nothing that resembles a workload ever renders in this chart.
+4. **"First test of any cluster" ships as a values-gated Helm test hook.** `helm test` runs a curl pod against the Service (fail-fast, `helm.sh/test` labels; only ever runs on the explicit command, so the placeholder default never fires it spuriously). The umbrella's kind job runs it against the stand-in; phase 11 runs the identical hook with the real address. Hook image `curlimages/curl` pinned by tag, with the stand-in image (busybox `wget`) as the pull-free alternative.
+5. **The stand-in is rehearsal scaffolding, not a chart workload.** `k8s/umbrella/standin/` — a python-stdlib single file answering `GET /health` with 200 plus a documented permissive catch-all; Dockerfile `FROM python:3.12-alpine`, COPY-only (no RUN → no emulation), uid 65532 — exactly the published tickets-mcp image's pattern. Local name `chudmax-engine-standin:0.1.0`, never published (not a `ghcr.io/urmanac/chudmax/*` reference — it is not a distribution artifact). Mechanism: hostNetwork :8080 on the kind node + node-IP endpoint = one-step install and port parity with the real engine; recorded alternatives if the first kind run frictions out: NodePort + node IP (no hostNetwork) and mock pod IP (two-step `helm upgrade --set`). Pod→node-IP under kindnet: `speculation` until run.
+6. **Web chart = thin shell; the image-source answer is option (a).** Investigation (GitHub web UI, 2026-11-25, `verified-here`): `urmanac/chudmax-engine`, `chudmax-web` and `hermes-agent` are single-commit empty placeholders — no public source exists from which CI could build a web image, and inventing one is forbidden. So `web.image` is a values-driven reference (default = the unpublished phase-10 tag with a build-it-yourself comment — the mcp chart's own precedent for unpublished tags), the kind rehearsal runs `web.enabled=false`, and the web's kind exercise waits for phase 10. Port/probe defaults are labeled guesses with knobs ("revisit at phase 10").
+7. **No NetworkPolicies in the new charts — a recorded deviation from the mcp chart's pattern.** CNI-dependent egress guesses were the F5/Cilium trap; the web's constraints wait for the phase-15 route and phase-12's CNI inventory; and kind's default CNI enforces no policies anyway, so the rehearsal would prove nothing about them.
+8. **Rehearsal bar and honest mcp receipts.** All enabled releases `deployed`; the engine-Service `/health` hook passes; the mcp pod Running with the server answering 200 (initialize handshake over its Service) and the honest no-data body; the fetcher waiting for the ExternalArtifact is **expected** (4b's startup fix keeps it alive) and recorded as such. The commit→tickets data-path proof is phase 5's — the umbrella proves install + reachability, nothing more (steering: do not duplicate it).
+9. **Toolchain mapping (steering 4 + 6).** Images build under podman, export via `podman save`, load via `kind load image-archive` — no registry. The both-arches proof: the stand-in builds as a manifest list in its own job; fetcher/tickets-mcp both-arches stay re-proved in the existing `image-chart.yml` (the umbrella's kind job loads amd64 only — the kind node's arch). Local kind = **docker provider** (docker is present; the podman provider's rootless-pasta caveats from phase 3 are not worth fighting); CI kind on `ubuntu-latest` is well-precedented — `speculation` until green, with docker buildx as the recorded podman fallback.
+10. **Parallel-safety by construction.** The phase-6 file set is disjoint from phase 5's; branch off current `main`; phase-5's branch is never a dependency; if its spec (000914_*) lands with kind scaffolding, adopt the approach into your own copy only.
 
 ## Notes for future agents (learnings)
 
-- **The 4b scope flip matters:** `k8s/tickets-mcp/` on chudmax-mcp `main` is the *published canonical ticket server* (image `ghcr.io/urmanac/chudmax/tickets-mcp`), and the old mock ticket server is deleted. Phase 6's "mock engine" is a different, new thing — the stand-in for the box's engine. Don't resurrect the deleted mock's files.
-- **Sandbox facts (2026-11-25):** docker, kind, kubectl on PATH; podman and helm absent (install per phase-3 design.md's implementation notes — helm tarball from get.helm.sh, rootless podman); `curl` to the engine address exits 7 (unreachable) — every rehearsal design that assumed box reachability is dead on arrival; binfmt_misc is denied (arm64 *containers* can't run — phase-3's host-side qemu exec is the arm64 proof route).
-- **Chart-pattern source of truth:** `k8s/chart/chudmax-mcp/` — values comment style, unpublished-tag note wording, pod-level securityContext/automount pattern, kubeconform-on-rendered-templates CI, NOTES.txt conventions. Copy the patterns, not the text.
-- **EndpointSlice shape facts:** `addressType: IPv4`, the `kubernetes.io/service-name` label matching the Service, `endpoints[].addresses` = plain IPs (service ClusterIPs are rejected — hence node-IP endpoints), ports need name/protocol. Selectorless Service needs no `targetPort` gymnastics — keep service port and endpoint port equal (8080) everywhere.
-- **Helm test hooks** (`helm.sh/hook: test`, `helm.sh/hook-weight`, fail-fast annotation) make the cluster probe a first-class artifact: `helm test <release>` after install, in-sandbox and in CI, reusable at phase 11 unchanged.
-- **Labels vocabulary** (chudmax/AGENTS.md): `verified-here` (this sandbox ran it), `handoff-reported` (CoS/owner said it), `speculation` (not yet exercised — kind-in-CI, pod→node-IP under kindnet, the web's default port/probe).
-- **Docs rule:** this helix-specs branch is public-safe by construction — no LAN addresses, no credential names, no internal proxy hostnames. The card's literal engine address is deliberately absent from these docs; implementation keeps it that way (install values only).
+- **Steering deltas vs this spec's first draft (2026-11-25, `handoff-reported`):** umbrella home DECIDED (chudmax-mcp — not the empty repos); endpoint default DECIDED (TEST-NET-1 baked, not empty-with-required); the fake engine moved out of the web chart into the umbrella's rehearsal scaffolding; web image = option (a) after investigation; the kind proof's scope fixed at `/health` + mcp-pod receipts (not the data path).
+- **Public-org facts (GitHub web UI, 2026-11-25, `verified-here`):** the `urmanac` org is public; `chudmax-mcp` carries the real work; `chudmax-engine`, `chudmax-web`, `hermes-agent` are empty placeholders awaiting phase 10. "Hermes Agent (for ChudMax)" is the phase-9 chart's subject — **not** the web harness; don't conflate them.
+- **The published canonical's server facts** (for the mcp receipts): args `--http 8080 --host 0.0.0.0 --data-root /data`; Service port 8080; honest no-data answers before the first artifact; the fetcher's startup-`Get` NotFound retries with backoff (4b) — so "pod Up, server 200, fetcher waiting" is a stable, expected state on kind.
+- **Sandbox facts:** docker, kind, kubectl on PATH; podman + helm absent (phase-3 recipe: helm tarball from get.helm.sh, rootless podman; binfmt_misc denied — arm64 *containers* can't run, host-side qemu exec is the arm64 proof route); curl to the engine address exits 7 — any design assuming box reachability is dead on arrival.
+- **Chart-pattern sources to copy (patterns, not text):** `k8s/chart/chudmax-mcp/` (values comment style, unpublished-tag wording, pod-level securityContext/automount, kubeconform-on-rendered-templates CI, NOTES conventions, installer-facing values tables); `k8s/tickets-mcp/Dockerfile` (the COPY-only template the stand-in mirrors).
+- **EndpointSlice shape facts:** `addressType: IPv4`; the `kubernetes.io/service-name` label matching the Service; `endpoints[].addresses` take plain IPs (service ClusterIPs are rejected — node IP in rehearsal); keep Service port and endpoint port equal (8080) for parity with the real engine.
+- **Helm test hooks:** `helm.sh/hook: test` + fail-fast annotation; subchart hooks run under the parent release, so one `helm test` covers the umbrella.
+- **Labels vocabulary** (`chudmax/AGENTS.md`): `verified-here` (this sandbox ran it), `handoff-reported` (CoS/owner said it), `speculation` (not yet exercised — kind-in-CI, pod→node-IP under kindnet, the web's default port/probe).
+- **Docs rule:** this helix-specs branch and the code repos are public — the engine's real LAN address, credential names, and internal proxy hostnames never appear in any of them; the card's literal address is deliberately absent from these docs.
 
 ## What this settles
 
-- The pointer chart, the web shell with its stand-in engine, and the umbrella exist as reviewable, installable units with CI re-proofs — the full install surface phase 7 (canary), 8 (image automation) and 12 (real placement) build on.
-- The cluster probe ("pod reaches `/health` through the engine Service") is written once, inside the engine chart, and answers for rehearsal and reality alike.
-- Still `speculation` after this spec: kind-in-CI reliability, pod→node-IP under kindnet, the mock's catch-all adequacy — each gets its first real exercise in the implementation run and is re-labeled from evidence.
+- The pointer chart, the web shell, and the umbrella + rehearsal scaffolding exist as reviewable units with CI re-proofs — the surfaces phases 7 (canary), 8 (image automation), 10 (publishing switch) and 11 (real pointer values) inherit.
+- The cluster probe is written once (inside the engine chart, as a hook) and answers for rehearsal and reality alike; the honest framing is part of the artifact, not a footnote.
+- Still `speculation` after this spec: kind-in-CI reliability, pod→node-IP under kindnet, the stand-in catch-all's adequacy — each gets its first exercise in the implementation run and is re-labeled from evidence.
