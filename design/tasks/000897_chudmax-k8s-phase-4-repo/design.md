@@ -84,6 +84,14 @@ the cluster to a human-chosen endpoint, so a silent or broken sync is heard, not
 - This sandbox had `GITLAB_SECRET_TOKEN` but no provider host — the private source-of-truth repo was not readable here; the narrowed paths now come from the steering brief (`handoff-reported`), and the implementing session verifies the real tree against those four entries before merging (adjust only on a genuine mismatch).
 - Public-mirror discipline: the GitRepository URL is public-safe per the CoS ruling (a URL is not a credential); Secret names are fine (referenced by name only); no internal proxy hostnames anywhere in the public repo.
 
+## Implementation notes (2026-11-25, sandbox — all `verified-here`)
+
+- **flux-schema in practice:** the standalone release binary (`flux-schema_0.18.0_linux_amd64.tar.gz`, sha256-verified) runs without the flux CLI or the plugin machinery — download, checksum, `./flux-schema validate k8s/repo-sync --schema-location default -v`. CI instead uses the official path (`fluxcd/flux2/action@v2.10.1` with `plugins: schema`).
+- **Validation receipts:** the five repo-sync objects → Valid: 5, Invalid: 0, exit 0. Negative probe (bad `eventSeverity: INFO`, unknown `spec.bogusField` on the GitRepository) → both rejected as schema violations, exit 1 — enum + unknown-field checks are real, not a rubber stamp.
+- **No provider access this session — confirmed twice:** no provider host in env, and `HELIX_REPOSITORIES` lists only the four GitHub `code-*` rows (the private repo is detached from platform metadata). The GitRepository URL therefore ships as the placeholder `https://git.example.com/group/chudmax-source.git`, flagged in the PR for the human/next session to replace with the real URL (public-safe per the CoS ruling).
+- **CI pins:** `fluxcd/flux2/action@v2.10.1` (latest flux2, 2026-11-20 — ships source-controller v1.10.2 / notification-controller v1.10.1) and flux-schema v0.18.0 locally. The repo's existing workflows pin `actions/checkout@v4` — matched.
+- **Reviewer's note adopted:** the ArtifactGenerator route (vs plain ignore rules) is in because it shows the modern Flux pattern — the generated ExternalArtifact also keeps the phase-12 cluster sync unconflicted, which plain ignore-narrowing cannot promise on a shared GitRepository.
+
 ## What this settles
 
 - The Flux side exists as reviewable parts: five files + README + CI schema validation; both plan questions answered with evidence and explicit decision points.
