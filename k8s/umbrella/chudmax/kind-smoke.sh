@@ -238,7 +238,7 @@ MCP_POD_IP="$(kubectl get pod -n "$NS" -l app.kubernetes.io/name=mcp -o jsonpath
 INIT=$(podcurl mcp-init curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   "http://$MCP_POD_IP:8080/mcp")
-echo "$INIT" | grep -q '"chudmax-tickets"' || { kubectl logs deploy/chudmax-mcp -n "$NS" -c server --tail=20 >&2 2>/dev/null || true; die "initialize did not answer chudmax-tickets: $INIT"; }
+echo "$INIT" | grep -q '"chudmax-tickets"' || { kubectl logs deploy/chudmax-mcp -n "$NS" -c server --tail=20 1>&2 2>/dev/null || true; die "initialize did not answer chudmax-tickets: $INIT"; }
 echo "  initialize → 200, serverInfo: $(echo "$INIT" | grep -o '"serverInfo":{[^}]*}')"
 LIST=$(podcurl mcp-list curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_tickets","arguments":{}}}' \
@@ -255,20 +255,44 @@ if LOG=$(fetcher_404); then
   echo "  apiserver 404 in the fetcher's logs (defaults' policy admits it): $LOG"
   RUNG="defaults"
 else
-  echo "  the defaults' apiserver rule blocks on kindnet - applying the adopted phase-5 route:"
-  EP="$(kubectl get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}')"
-  echo "  discovered control-plane endpoint: $EP (cidr mode + a 6443 passthrough entry)"
+  echo "  the defaults' apiserver rule blocks on kindnet - applying the both-stages override:"
+  EP="$(kubectl get endpoints kubernetes -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)"
+  VIP="$(kubectl get svc kubernetes -n default -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)"
+  echo "  kubernetes Service VIP: $VIP   control-plane endpoint: $EP"
+  echo "  (the fetcher dials the VIP from the in-cluster config; kindnet may evaluate"
+  echo "   the policy pre- or post-DNAT - the override admits BOTH addresses)"
+  # the cidr rule: the VIP on 443 (the pre-DNAT match); the extra rule: the
+  # control-plane endpoint on 443+6443 (the post-DNAT match)
   helm upgrade chudmax "$CHART" -n "$NS" \
     --set engine.endpoint.host="$ENGINE_HOST" \
     --set mcp.networkPolicy.egress.apiServer.mode=cidr \
-    --set mcp.networkPolicy.egress.apiServer.cidr="$EP/32" \
-    --set mcp.networkPolicy.egress.extra[0].to[0].ipBlock.cidr="$EP/32" \
-    --set mcp.networkPolicy.egress.extra[0].ports[0].protocol=TCP \
-    --set mcp.networkPolicy.egress.extra[0].ports[0].port=6443 >/dev/null
-  sleep 5
-  LOG=$(fetcher_404) || die "the fetcher still shows no apiserver 404 even under the cidr+6443 override"
+    --set "mcp.networkPolicy.egress.apiServer.cidr=$VIP/32" \
+    --set 'mcp.networkPolicy.egress.extra[0].to[0].ipBlock.cidr'="$EP"/32 \
+    --set 'mcp.networkPolicy.egress.extra[0].ports[0].protocol=TCP' \
+    --set 'mcp.networkPolicy.egress.extra[0].ports[0].port=443' \
+    --set 'mcp.networkPolicy.egress.extra[0].ports[1].protocol=TCP' \
+    --set 'mcp.networkPolicy.egress.extra[0].ports[1].port=6443' >/dev/null
+  # a policy upgrade restarts nothing - restart so the fetcher's FIRST list
+  # fires immediately instead of waiting out its resync cadence
+  kubectl rollout restart deploy/chudmax-mcp -n "$NS" >/dev/null
+  for i in $(seq 1 60); do
+    phase="$(kubectl get pod -n "$NS" -l app.kubernetes.io/name=mcp -o jsonpath='{.items[0].status.phase}' 2>/dev/null || true)"
+    if [ "$phase" = "Running" ]; then break; fi
+    sleep 2
+  done
+  [ "$phase" = "Running" ] || die "the restarted mcp pod never reached Running"
+  LOG=""
+  for i in $(seq 1 30); do
+    LOG="$(fetcher_404 || true)"
+    if [ -n "$LOG" ]; then break; fi
+    sleep 3
+  done
+  if [ -z "$LOG" ]; then
+    kubectl logs deploy/chudmax-mcp -n "$NS" -c fetcher --tail=15 1>&2 2>/dev/null || true
+    die "the fetcher still shows no apiserver 404 even under the both-stages override (vip $VIP, endpoint $EP, 443+6443)"
+  fi
   echo "  apiserver 404 in the fetcher's logs (the override admits it): $LOG"
-  RUNG="cidr+6443 override (the pre-phase-5 chart's 443-only rule blocked on kindnet)"
+  RUNG="cidr+extra override (the vip on 443 + the control-plane endpoint on 443/6443; the pre-phase-5 chart's 443-only selector rule blocks on kindnet)"
 fi
 
 say "11. the stock-kind auto-gate check (installed state)"
