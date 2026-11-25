@@ -103,6 +103,28 @@ done
 [ "$code" = "200" ] || die "the mock engine never answered /health on the host side"
 echo "  mock engine up (host-side /health: $code)"
 
+podcurl() { # podcurl <name> <curl-args...> — a probe pod whose OUTPUT is read from the pod logs
+  # kubectl run --rm -i races the attach stream: a fast container (curl answers
+  # in milliseconds - refused, 403 or 200 alike) exits before the stream opens
+  # and its stdout is lost, so EVERY probe reads as empty. Logs pulled after
+  # completion never race (the hook pods are immune already: helm test checks
+  # the exit code, and the fetcher assertion reads logs).
+  local name="$1"; shift
+  kubectl delete pod "$name" -n "$NS" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  kubectl run "$name" --restart=Never --image="$CURL_IMAGE" -n "$NS" --quiet -- "$@" >/dev/null 2>&1 || true
+  local phase="" i
+  for i in $(seq 1 30); do
+    phase="$(kubectl get pod "$name" -n "$NS" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    case "$phase" in Succeeded|Failed) break ;; esac
+    sleep 1
+  done
+  [ "$phase" = "Succeeded" ] || [ "$phase" = "Failed" ] || echo "  podcurl: pod $name never completed (phase=${phase:-none})" >&2
+  local out
+  out="$(kubectl logs "$name" -n "$NS" 2>/dev/null || true)"
+  kubectl delete pod "$name" -n "$NS" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  printf '%s' "$out"
+}
+
 probe() { # probe <url> — an in-cluster pod; prints the HTTP code on STDOUT, miss reasons on STDERR
   # The Host header is the Service's short name — what a same-namespace client
   # sends and what the Service's DNAT preserves end to end. An IP-literal URL
@@ -110,12 +132,11 @@ probe() { # probe <url> — an in-cluster pod; prints the HTTP code on STDOUT, m
   # STDERR matters: try_endpoint captures this function's STDOUT, so anything
   # echoed here to stdout would be swallowed into the comparison and never
   # reach the log (three CI runs were diagnosed blind because of that).
-  local code
-  code=$(kubectl run "probe-$(printf '%s' "$1" | md5sum | cut -c1-8)" --rm -i --restart=Never \
-    --image="$CURL_IMAGE" -n "$NS" --quiet -- \
-    curl -s -o /dev/null -m 5 -w '%{http_code}' -H 'Host: chudmax-engine' "$1") || true
-  [ "$code" = "200" ] || echo "  probe miss: $1 → ${code:-no-answer}" >&2
-  printf '%s' "$code"
+  local out
+  out="$(podcurl "probe-$(printf '%s' "$1" | md5sum | cut -c1-8)" \
+    curl -s -o /dev/null -m 5 -w '%{http_code}' -H 'Host: chudmax-engine' "$1")"
+  [ "$out" = "200" ] || echo "  probe miss: $1 → ${out:-no-output}" >&2
+  printf '%s' "$out"
 }
 
 say "5. the engine endpoint: a ladder of candidates, the first route pods can reach wins"
@@ -196,14 +217,12 @@ say "8. helm test (the engine hook through the Service + the web hook)"
 helm test chudmax -n "$NS"
 
 say "9. mcp receipts (HTTP over the Service, from a pod in the release namespace)"
-INIT=$(kubectl run mcp-init --rm -i --restart=Never --image="$CURL_IMAGE" -n "$NS" --quiet -- \
-  curl -s -m 10 -X POST -H 'Content-Type: application/json' \
+INIT=$(podcurl mcp-init curl -s -m 10 -X POST -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   http://chudmax-mcp:8080/mcp)
 echo "$INIT" | grep -q '"chudmax-tickets"' || die "initialize did not answer chudmax-tickets: $INIT"
 echo "  initialize → 200, serverInfo: $(echo "$INIT" | grep -o '"serverInfo":{[^}]*}')"
-LIST=$(kubectl run mcp-list --rm -i --restart=Never --image="$CURL_IMAGE" -n "$NS" --quiet -- \
-  curl -s -m 10 -X POST -H 'Content-Type: application/json' \
+LIST=$(podcurl mcp-list curl -s -m 10 -X POST -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_tickets","arguments":{}}}' \
   http://chudmax-mcp:8080/mcp)
 echo "  list_tickets (the honest no-data body): $LIST"
