@@ -12,11 +12,11 @@ kind: GitRepository
 metadata:
   name: chudmax-source
 spec:
-  # The private source-of-truth repo's HTTPS URL. Placeholder until a session
-  # with provider access fills it — the URL itself is public-safe per the
-  # owner's ruling (a URL is not a credential); only ever replace it, never
-  # add credentials here.
-  url: https://git.example.com/group/chudmax-source.git
+  # The private source-of-truth repo's HTTPS URL — the source of the narrowed
+  # artifact (tickets.md, STATE.md, docs/, decisions/ on main). A URL is
+  # metadata, not a credential: public-safe in a manifest per the owner's
+  # ruling; the auth Secret is referenced by name below and never appears here.
+  url: https://gitlab.com/kingdonb/chudmax.git
   ref:
     branch: main
   interval: 1m

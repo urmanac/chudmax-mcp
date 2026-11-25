@@ -28,6 +28,18 @@ Alert (GitRepository + ArtifactGenerator events, info) ─► Provider ─► th
 | `receiver.yaml` | Receiver `chudmax-repo` — `type: gitlab`, `events: ["Push Hook"]`, `secretRef: webhook-token` |
 | `alerts.yaml` | Alert `chudmax-source-alerts` (info) + Provider `chudmax-notifications` (generic, address from Secret) |
 
+## The source repo
+
+The GitRepository points at the private source-of-truth repo's `main`:
+`https://gitlab.com/kingdonb/chudmax.git` (a URL is metadata, not a
+credential — public-safe in a manifest per the owner's ruling; the auth
+Secret carries the credentials and is referenced by name only). The narrowed
+paths the copy rules target were verified against `main`'s tree on
+2026-11-25: `tickets.md` and `STATE.md` at the root, `docs/` (11 files) and
+`decisions/` (7 records) as top-level trees — the head was `de442410`, the
+same commit phase 2's fresh-clone check verified, so nothing has moved
+between the two checks.
+
 ## Install
 
 ```sh
