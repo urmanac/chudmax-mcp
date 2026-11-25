@@ -5,11 +5,11 @@
 #   1. /health through the ENGINE Service: pod → selectorless Service →
 #      EndpointSlice → EXTERNAL host — the exact production topology. The
 #      external host is the mock engine: the same Strata image (--engine mock)
-#      run OUTSIDE kind on the docker bridge (a ladder of candidate routes;
-#      if pods cannot reach the bridge, the mock relaunches on the runner host
-#      and the receipt records the route that won). HONEST FRAMING: this proves
-#      the Service→EndpointSlice→external-host path, not the real engine — the
-#      real address arrives with phase 11's private deployment values.
+#      run OUTSIDE kind on the docker bridge (a ladder of candidate routes:
+#      the docker-bridge gateway and IP, the kind node's netns, the runner
+#      host; the receipt records the route that won). HONEST FRAMING: this
+#      proves the Service→EndpointSlice→external-host path, not the real
+#      engine — the real address arrives with phase 11's private values.
 #   2. the WEB pod (Strata --engine mock) answering /health through its Service;
 #      the curl's Host header is the Service name, so Strata's DNS-rebinding
 #      guard and the allowedHosts auto default are proven too.
@@ -103,16 +103,18 @@ done
 [ "$code" = "200" ] || die "the mock engine never answered /health on the host side"
 echo "  mock engine up (host-side /health: $code)"
 
-probe() { # probe <url> — an in-cluster pod; prints the HTTP code and never hides why it missed
+probe() { # probe <url> — an in-cluster pod; prints the HTTP code on STDOUT, miss reasons on STDERR
   # The Host header is the Service's short name — what a same-namespace client
   # sends and what the Service's DNAT preserves end to end. An IP-literal URL
-  # would send the IP as Host and Strata's DNS-rebinding guard would 403 it:
-  # the earlier "unreachable from pods" failures were that guard, not routing.
+  # would send the IP as Host and Strata's DNS-rebinding guard would 403 it.
+  # STDERR matters: try_endpoint captures this function's STDOUT, so anything
+  # echoed here to stdout would be swallowed into the comparison and never
+  # reach the log (three CI runs were diagnosed blind because of that).
   local code
   code=$(kubectl run "probe-$(printf '%s' "$1" | md5sum | cut -c1-8)" --rm -i --restart=Never \
     --image="$CURL_IMAGE" -n "$NS" --quiet -- \
     curl -s -o /dev/null -m 5 -w '%{http_code}' -H 'Host: chudmax-engine' "$1") || true
-  [ "$code" = "200" ] || echo "  probe miss: $1 → ${code:-no-answer}"
+  [ "$code" = "200" ] || echo "  probe miss: $1 → ${code:-no-answer}" >&2
   printf '%s' "$code"
 }
 
@@ -124,33 +126,50 @@ say "5. the engine endpoint: a ladder of candidates, the first route pods can re
 GW="$(docker network inspect kind | grep -o '"Gateway": *"[0-9.]*"' | head -1 | cut -d'"' -f4)"
 [ -n "$GW" ] || die "no IPv4 gateway parsed from docker network inspect kind ($(docker network inspect kind | grep -c Gateway) Gateway entries)"
 CIP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' chudmax-mock-engine)"
-echo "  bridge gateway: $GW   mock-engine bridge IP: $CIP"
+NODE="$(kind get nodes --name "$CLUSTER" 2>/dev/null | head -1 || true)"
+NODE_IP="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)"
+echo "  bridge gateway: $GW   mock-engine bridge IP: $CIP   node: ${NODE:-?} ($NODE_IP)"
 ENGINE_HOST=""
 EN_ROUTE=""
-try_endpoint() { # try_endpoint <ip>: probe from a pod; on 200 pin ENGINE_HOST and return 0
-  if [ "$(probe "http://$1:8080/health")" = "200" ]; then
-    ENGINE_HOST="$1"; return 0
-  fi
+GW_CODE="?" CIP_CODE="?" NODE_CODE="?"
+try_endpoint() { # try_endpoint <ip> <result-var>: probe from a pod; on 200 pin ENGINE_HOST and return 0
+  local ip="$1" out
+  out="$(probe "http://$ip:8080/health")"   # probe's miss diagnostics ride on stderr — the capture is the bare code
+  printf -v "$2" '%s' "${out:-none}"
+  if [ "$out" = "200" ]; then ENGINE_HOST="$ip"; return 0; fi
   return 1
 }
-if try_endpoint "$GW"; then
+if try_endpoint "$GW" GW_CODE; then
   EN_ROUTE="docker-bridge gateway (pod → gateway-ip → host-side userland-proxy → the mock; Host: the Service name)"
-elif try_endpoint "$CIP"; then
+elif try_endpoint "$CIP" CIP_CODE; then
   EN_ROUTE="mock container bridge IP (the gateway route was unreachable; recorded honestly)"
 else
-  echo "  neither the gateway nor the bridge IP is reachable from pods - relaunching the mock on the runner host"
+  echo "  neither the gateway ($GW_CODE) nor the bridge IP ($CIP_CODE) answered - relaunching the mock in the kind NODE's network namespace"
   docker rm -f chudmax-mock-engine >/dev/null 2>&1 || true
-  docker run -d --name chudmax-mock-engine --network host \
+  docker run -d --name chudmax-mock-engine --network "container:$NODE" \
     -e STRATA_ALLOWED_HOSTS="chudmax-engine,$ENGINE_DNS,$ENGINE_DNS.cluster.local,localhost,127.0.0.1" \
     "$WEB_IMAGE" --engine mock --host 0.0.0.0 --port 8080 >/dev/null
-  for i in $(seq 1 30); do
-    code=$(curl -s -o /dev/null -w '%{http_code}' -m 2 http://127.0.0.1:8080/health || true)
-    [ "$code" = "200" ] && break
-    sleep 1
-  done
-  [ "$code" = "200" ] || die "the host-network mock never answered /health on the runner host"
-  try_endpoint "$GW" || die "the mock engine is unreachable from pods at $GW, at $CIP, and host-networked at $GW"
-  EN_ROUTE="docker-bridge gateway → host-network mock (bridge L2 was blocked from pods; recorded honestly)"
+  sleep 5   # the mock boots in a couple of seconds; the probe below is the readiness check
+  if try_endpoint "$NODE_IP" NODE_CODE; then
+    EN_ROUTE="kind-node IP (the mock shares the node's netns; pod→Service→EndpointSlice→node-IP is the same selectorless-Service mechanism the production LAN address exercises)"
+  else
+    echo "  the node route failed too ($NODE_CODE) - relaunching the mock on the runner host network"
+    docker rm -f chudmax-mock-engine >/dev/null 2>&1 || true
+    docker run -d --name chudmax-mock-engine --network host \
+      -e STRATA_ALLOWED_HOSTS="chudmax-engine,$ENGINE_DNS,$ENGINE_DNS.cluster.local,localhost,127.0.0.1" \
+      "$WEB_IMAGE" --engine mock --host 0.0.0.0 --port 8080 >/dev/null
+    for i in $(seq 1 30); do
+      code=$(curl -s -o /dev/null -w '%{http_code}' -m 2 http://127.0.0.1:8080/health || true)
+      [ "$code" = "200" ] && break
+      sleep 1
+    done
+    [ "$code" = "200" ] || die "the host-network mock never answered /health on the runner host"
+    if try_endpoint "$GW" GW_CODE; then
+      EN_ROUTE="docker-bridge gateway → host-network mock (the bridge and node routes were blocked from pods; recorded honestly)"
+    else
+      die "the mock engine is unreachable from pods on every rung (probe codes: gateway=$GW_CODE, bridge-IP=$CIP_CODE, node-IP=$NODE_CODE, host-gateway=$GW_CODE)"
+    fi
+  fi
 fi
 echo "  route won: $EN_ROUTE"
 
@@ -224,6 +243,6 @@ echo "  engine endpoint: $ENGINE_HOST:8080 (route: $EN_ROUTE)"
 echo "  policy rung: $RUNG"
 echo "  hooks: engine /health via the Service = PASS; web /health via the Service = PASS"
 echo "  HONEST FRAMING: this proves the Service→EndpointSlice→external-host path against a mock engine"
-echo "  (the same Strata image, --engine mock, outside kind on the docker bridge) - NOT the real engine;"
+echo "  (the same Strata image, --engine mock, outside the pod network — the winning route is recorded above) - NOT the real engine;"
 echo "  the real address arrives with phase 11's private deployment values and reruns the same hook."
 echo "  NOT proven here: the commit→tickets data path (phase 5's rehearsal)."
