@@ -56,3 +56,15 @@ What stays `speculation` until a later phase: the narrowed ArtifactGenerator art
 
 - The last piece of "the repo reaches the ticket server" that isn't Flux's own (`repo-sync.md`): the consuming side exists and is testable without a cluster.
 - Nothing on the box, nothing on the cluster: phase 2 only adds a Go module, its tests, and one CI job.
+
+## Implementation proof (2026-11-25, delivered as MR !19 — `verified-here`)
+
+Branch `feat/t0039-fetcher-sidecar` off `main` @ `9950942f`, commit `9250d828`, MR !19 opened via the GitLab API (not merged; the human merges). All checks run in this sandbox against the branch checkout:
+
+- `go vet ./...` clean; `go test -race -count=1 ./...`: **10/10 PASS** — happy path, digest mismatch keeps the previous tree (and no temp leftovers), second-revision swap + retention 3, same-digest no-op + rollback (no re-download, artifact.json preserved), unsafe-input refusals (empty digest, non-sha256, malformed; a `current` symlink outside `revisions/` is refused), watch: startup read acts on the artifact already there, change event swaps, resync fallback catches a change when the stream is silent, reconnect catches a change when the stream dropped, failed fetch keeps the previous tree.
+- Binary smoke test against a real tarball server: swap=true, relative symlink `revisions/<hex>`, correct `artifact.json`, second run swapped=false, bad digest exits 1, unknown subcommand exits 2.
+- `GOARCH=arm64 go build` succeeds (cross-compile honesty check; images come in phase 3).
+- `python3 tools/mcp/selftest.py` on the branch: **19/19 PASS, exit 0** (ticket count check reads 39 vs 39 — the suite derives both counts from `tickets.md`).
+- CI on pipeline 3114800020 (`verified-here` via the API): `fetcher-test` **success** — `go vet` clean, `go test -count=1` ok, arm64 build ok; shared runners, no cluster, no privileged runner. `secret_detection` failed once on a transient registry-image pull timeout at that runner, passed on retry (infrastructure, not code — the same job passes on `main`'s pipelines).
+- Reviewer-dispositioned defaults implemented as adopted: `artifact.json` inside the unpack dir; 1-minute resync (also the reconnect backoff); retention 3; caps 100/200 MiB — all flag-overridable, flagged in the MR description for merge review.
+- Labels: everything above `verified-here`; real-API-server watch semantics stay `speculation` until phase 5's rehearsal; the ArtifactGenerator-vs-GitRepository-artifact question stays with phase 4 (`speculation` in `repo-sync.md`).
