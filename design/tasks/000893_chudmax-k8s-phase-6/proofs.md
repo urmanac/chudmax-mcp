@@ -43,5 +43,6 @@ All claims carry the three labels (`chudmax/AGENTS.md`): `verified-here` (this s
 
 ## Flow
 
-- The write set held: `k8s/umbrella/**` + `.github/workflows/umbrella-kind.yml` only (plus this task dir). Phase 5's files (`k8s/chart/chudmax-mcp/`, `k8s/tickets-mcp/`, `k8s/repo-sync/`, `k8s/rehearsal/`, `rehearsal-sync.yml`) and the root README untouched — `verified-here` (`git diff --name-only origin/main…HEAD`).
+- **Merge order (CoS addendum, 2026-11-25, `handoff-reported`):** phase 5 merges first; the phase-6 branch is then **rebased onto `main`** at the CoS's instruction for the final CI run (the `file://` mcp dep consumes the auto-gated 443+6443 apiserver fix on the rebased head); the CoS merges — phase 6 never merges its own PR, and holds even if CI is green while phase 5 is still open. The workbench staging (everything in `chudmax-mcp`, the split to the empty `urmanac/chudmax-engine`/`-web` repos deferred to phase 10) is owner-confirmed.
+- **The write set held**: `k8s/umbrella/**` + `.github/workflows/umbrella-kind.yml` only (plus this task dir). Phase 5's files (`k8s/chart/chudmax-mcp/`, `k8s/tickets-mcp/`, `k8s/repo-sync/`, `k8s/rehearsal/`, `rehearsal-sync.yml`) and the root README untouched — `verified-here` (`git diff --name-only origin/main…HEAD`).
 - The missing-LICENSE flag rides in the PR description (Strata's MIT noted for the image). No registry push; the box untouched; conventional commits throughout.
