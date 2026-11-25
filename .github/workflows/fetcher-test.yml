@@ -1,0 +1,25 @@
+name: fetcher-test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: k8s/fetcher/go.mod
+          cache-dependency-path: k8s/fetcher/go.sum
+      - name: vet
+        run: go vet ./...
+        working-directory: k8s/fetcher
+      - name: test
+        run: go test -count=1 ./...
+        working-directory: k8s/fetcher
+      - name: arm64 build
+        run: GOARCH=arm64 go build -o /dev/null .
+        working-directory: k8s/fetcher
