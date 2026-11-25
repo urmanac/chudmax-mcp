@@ -74,6 +74,14 @@ Phase 5 (parallel) owns `.github/workflows/rehearsal*` and `k8s/rehearsal/`; the
 - **Actions YAML gotcha:** an unquoted step `name:` containing `: ` breaks the parse ("mapping values are not allowed here") — quote such names.
 - **Umbrella render shape (`verified-here`):** defaults render 2 Deployments (web+mcp), 2 NetworkPolicies (the mcp pair), 2 hook Pods, Role/RoleBinding/SA, 3 Services — no EndpointSlice, **no Cilium** (the auto fallback renders plain); the `203.0.113.10` variant adds the EndpointSlice; kubeconform -strict clean on all renders.
 
+## Implementation notes — the CI loop (2026-11-25, continued)
+
+- **CI on PR #6:** every job but `kind` green from the first run (chart proofs, web-image both arches, and the repo's other workflows); the `kind` rehearsal is iterating — the full failure history with receipts lives in proofs.md (`CI iteration history`). The read-path that works anonymously: the **run-summary page** renders the step-summary tail (the workflow writes the log tail there on failure); the annotations dialog needs sign-in and the REST API rate-limits the sandbox's shared IP.
+- **The Host-guard mask (the phase's most instructive bug):** Strata's DNS-rebinding guard 403s unknown Host headers — so ANY probe that curls the mock by IP literal (the bridge gateway, the container IP) looks "unreachable" while the network is fine. A probe against this mock must carry `Host: chudmax-engine` (the Service's short name — what a same-namespace client sends and what the Service's DNAT preserves). This masks BOTH directions: in a probe ladder and in any hand-run debugging. The same lesson already shaped the chart (allowedHosts auto renders short+mid+FQDN names).
+- **The hygiene grep covers scripts too:** the LAN-address tripwire matches ANY file under `k8s/umbrella/**` — a runtime fallback literal (docker's bridge gateway) in `kind-smoke.sh` failed the chart job. Rule: no dotted-quad RFC1918 literals anywhere in the phase-6 tree; compute at runtime or die with diagnostics.
+- **`kind load image-archive` loads the node's containerd store only** — a mock engine run via `docker run` on the host needs `docker load` from the same archive (both loads per archive is the pattern).
+- **`docker network inspect kind` may list the IPv6 IPAM block first** — grep for an IPv4-shaped gateway (`"Gateway": "[0-9.]*"`), and never fall back to a hardcoded RFC1918 literal (see above).
+
 ## Notes for future agents (learnings)
 
 - **What the review killed from the first drafts (do not resurrect):** the "fork is private until phase 10" assumption (it is public NOW); the dummy `/health` `mock_engine.py` stand-in (use real Strata `--engine mock` everywhere a mock engine is needed); the hostNetwork-in-kind endpoint (use the docker-bridge gateway); the baked TEST-NET-1 endpoint default (empty + RFC 5737 in CI templates); the `k8s/engine-chart/`/`k8s/web-chart/` top-level dirs (the charts are subcharts under `k8s/umbrella/chudmax/subcharts/`); the separate `umbrella.yml` name (it is `umbrella-kind.yml`).
@@ -85,6 +93,7 @@ Phase 5 (parallel) owns `.github/workflows/rehearsal*` and `k8s/rehearsal/`; the
 - **Chart-pattern sources (patterns, not text):** `k8s/chart/chudmax-mcp/` — values style, unpublished-tag wording, pod-level securityContext, kubeconform-on-rendered CI, NOTES conventions, installer-facing values tables.
 - **Labels vocabulary** (`chudmax/AGENTS.md`): `verified-here` / `handoff-reported` / `speculation` (kind-in-CI, pod→bridge-gateway, the auto allowedHosts default's real-world fit).
 - **Docs rule:** this branch and the code repos are public — the engine's real LAN address, credentials, and internal proxy hostnames never appear; the card's literal address is deliberately absent from these docs.
+- **Debugging a Strata-fronted endpoint from a pod: always set the Host header explicitly.** 403 from the guard looks like a network block in every ladder/probe construction; `curl -H 'Host: <service-name>' http://<ip>:<port>/health` is the correct probe shape (the Service's DNAT preserves the client's Host, so this is also the faithful rehearsal of the real path).
 
 ## What this settles
 

@@ -41,6 +41,18 @@ All claims carry the three labels (`chudmax/AGENTS.md`): `verified-here` (this s
 - The kind rehearsal's cluster-side steps: hooks (engine + web), the mcp receipts (release deployed; pod Running; server 200 initialize; the honest no-data body), **the fetcher-log assertion** (the apiserver 404 NotFound — with the adopted phase-5 `cidr`+6443 fallback ready if the pre-fix chart's 443-only apiserver rule blocks on kindnet's post-DNAT evaluation), the endpoint-route ladder (gateway-ip vs bridge-container-ip), the both-arches manifest build of the web image (arm64 under qemu).
 - The LAN-address hygiene grep (no RFC1918-shaped address in any phase-6 artifact) runs in CI's chart job too.
 
+## CI iteration history (`handoff-reported`, from the run summaries — the anonymous checks-page read-path)
+
+Each red run's receipt was read from the **run-summary page** (the workflow's step-summary tail renders there server-side; the annotations dialog needs sign-in and the REST API rate-limits this sandbox's shared IP).
+
+1. **bash brace expansion** ate `--set allowedHosts={a,b}` → quoted (`f3d45b3`).
+2. **namespace timing** — probe pods targeted `chudmax` before helm created it → `kubectl create namespace` right after kind up (`47890ae`).
+3. **`docker run` could not find the web image** — `kind load image-archive` loads the NODE's containerd store, not the host docker store → added `docker load -i` per archive, plus a 3-attempt `pbuild` retry for registry transients (`6177b80`, `e1db539`).
+4. **IPv6 gateway** — `docker network inspect` returned the IPv6 IPAM gateway (`fc00:…`) → parse an IPv4-shaped gateway; endpoint ladder added (gateway → bridge-IP → host-network relaunch) (`76e6182`).
+5. **RFC1918 literal** — the ladder's fallback default `172.18.0.1` tripped the workflow's LAN-hygiene grep (it covers scripts, not just manifests) → the script now dies with diagnostics instead of carrying a private-LAN fallback (`1e8a161`).
+6. **THE HOST-GUARD MASK (the real root cause of 4-6):** every ladder probe curled an IP-literal URL, so curl sent the IP as the Host header — Strata's DNS-rebinding guard 403s unknown Hosts, and the ladder read 403 as "unreachable from pods". The receipt said `FAIL: the mock engine is unreachable from pods at 172.18.0.1, at 172.18.0.4, and host-networked at 172.18.0.1` while the host-side `/health` was 200 — the network was never broken. Fix: probes send `Host: chudmax-engine` — what a same-namespace client sends, and what the Service's DNAT preserves end to end (`6f16ae0`). The rungs are re-labeled from the first green run.
+- **Meta-lesson for the CI loop:** the receipt-in-step-summary design makes every failure diagnosable from the anonymous web UI — keep the ladder's probe misses printed (403 vs 000 distinguishes the guard from routing in one glance).
+
 ## Flow
 
 - **Merge order (CoS addendum, 2026-11-25, `handoff-reported`):** phase 5 merges first; the phase-6 branch is then **rebased onto `main`** at the CoS's instruction for the final CI run (the `file://` mcp dep consumes the auto-gated 443+6443 apiserver fix on the rebased head); the CoS merges — phase 6 never merges its own PR, and holds even if CI is green while phase 5 is still open. The workbench staging (everything in `chudmax-mcp`, the split to the empty `urmanac/chudmax-engine`/`-web` repos deferred to phase 10) is owner-confirmed.
