@@ -61,11 +61,22 @@ jobs:
           printf 'hello tickets\n' > /tmp/smoke/srv/tickets.md
           tar -C /tmp/smoke/srv -czf /tmp/smoke/srv/tickets.tar.gz tickets.md
           DIGEST=sha256:$(sha256sum /tmp/smoke/srv/tickets.tar.gz | cut -d' ' -f1)
-          nohup python3 -m http.server 8080 --bind 127.0.0.1 --directory /tmp/smoke/srv \
+          nohup python3 -m http.server 18080 --bind 127.0.0.1 --directory /tmp/smoke/srv \
             >/tmp/smoke/httpd.log 2>&1 &
-          sleep 1
+          # Wait until the server actually accepts connections (a fixed sleep 1
+          # failed once on a busy runner — the fetcher got connection-refused
+          # before http.server was listening); fail loudly with the server log.
+          for i in $(seq 1 15); do
+            curl -fsS -o /dev/null http://127.0.0.1:18080/tickets.tar.gz && break
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:18080/tickets.tar.gz \
+            || { echo 'http server never became ready:'; cat /tmp/smoke/httpd.log; exit 1; }
           podman run --rm --network host -v smokedata:/data ci-check:0.1.0 \
-            fetch --url http://127.0.0.1:8080/tickets.tar.gz \
+            fetch --url http://127.0.0.1:18080/tickets.tar.gz \
             --digest "$DIGEST" --root /data
+          # Warm the local store for the volume-contract check, one retry for
+          # the registry transient that hit this repo's CI before.
+          podman pull alpine:3.21 || podman pull alpine:3.21
           podman run --rm -v smokedata:/data alpine:3.21 \
             sh -c 'test -L /data/current && test -f /data/current/artifact.json && echo volume-contract OK'
