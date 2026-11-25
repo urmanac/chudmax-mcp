@@ -136,7 +136,9 @@ cilium status --wait --wait-duration 3m >/dev/null
 receipt "cilium ready (nodes match mode on)"
 
 note "installing Flux (source-watcher extra, shipped policies on)"
-flux install --components-extra=source-watcher --namespace=flux-system --wait
+# NOTE: flux install has no --wait flag — waiting for the controllers is its
+# default behavior (--timeout 5m); a --wait here dies with "unknown flag".
+flux install --components-extra=source-watcher --namespace=flux-system
 kubectl -n flux-system get pods -o name | tee -a "$SUMMARY"
 receipt "flux installed with source-watcher"
 
