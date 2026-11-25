@@ -2,7 +2,7 @@
 
 > **Public mirror** — the full-fidelity record (including deployment specifics) lives in the private source-of-truth repo.
 
-- [~] Create a feature branch off public `main` (`cdf5095`); conventional commits; nothing merges unreviewed; the existing `fetcher-test` workflow must stay green
+- [x] Create a feature branch off public `main` (`cdf5095`); conventional commits; nothing merges unreviewed; the existing `fetcher-test` workflow must stay green
 - [ ] `k8s/image/Dockerfile`: multi-stage — golang builder with `CGO_ENABLED=0`, `GOOS=$TARGETOS`, `GOARCH=$TARGETARCH` building `k8s/fetcher` (go.mod/go.sum copied first for layer caching); final stage alpine with a non-root user; the fetcher only — no ticket server, no private-repo material
 - [ ] Podman-first proof (this sandbox): `podman build --platform linux/amd64,linux/arm64 --manifest` succeeds; amd64 `podman run` smoke — `fetcher fetch` against a local tarball HTTP server swaps `current` and writes `artifact.json` per the volume contract; arm64 run under qemu best-effort (record honestly if skipped)
 - [ ] Chart scaffold `k8s/chart/chudmax-mcp/`: Chart.yaml (apiVersion v2, `0.1.0`), values.yaml (`image`, `externalArtifact.name`, `server.*` disabled by default, volume size, network-policy targets + extra passthroughs), `_helpers.tpl`, NOTES.txt (phase-4 dependency; unpublished default tag; pre-phase-4 CrashLoop note)
