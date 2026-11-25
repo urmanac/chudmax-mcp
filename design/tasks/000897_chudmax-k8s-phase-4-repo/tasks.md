@@ -2,14 +2,14 @@
 
 > **Public mirror** — the full-fidelity record (including deployment specifics) lives in the private source-of-truth repo.
 
-- [ ] If provider access is available in the implementing session: read `kubernetes/repo-sync.md` and the source repo's tree on `main`; confirm the narrowed paths (`tickets.md`, `STATE.md`, `docs/decisions`) and adjust the copy rules if the tree differs; label all claims with the three labels
-- [ ] Add `k8s/repo-sync/gitrepository.yaml` — GitRepository `chudmax-source`: placeholder `spec.url`, `ref.branch: main`, `interval: 1m`, `secretRef: chudmax-repo-auth`, no `spec.ignore`
-- [ ] Add `k8s/repo-sync/artifactgenerator.yaml` — source alias `repo` → `chudmax-source`; artifact `chudmax-tickets`, `originRevision: "@repo"`, copy rules for the narrowed set, `optional` unset (missing file = loud failure)
+- [ ] Verify the source repo's tree against the steering brief's four narrowed entries (`tickets.md`, `STATE.md`, `docs/`, `decisions/`) if provider access is available; adjust the copy rules only on a genuine mismatch; label all claims with the three labels
+- [ ] Add `k8s/repo-sync/gitrepository.yaml` — GitRepository `chudmax-source`: `spec.url` = the private repo's HTTPS URL (public-safe per the CoS ruling; placeholder + PR flag only if provider access is unavailable), `ref.branch: main`, `interval: 1m`, `secretRef: chudmax-repo-auth`, no `spec.ignore`
+- [ ] Add `k8s/repo-sync/artifactgenerator.yaml` — source alias `repo` → `chudmax-source`; artifact `chudmax-tickets`, `originRevision: "@repo"`, copy rules for the four narrowed entries, `optional` unset (missing file = loud failure)
 - [ ] Add `k8s/repo-sync/receiver.yaml` — `type: gitlab`, `events: ["Push Hook"]`, `secretRef: webhook-token`, `resources` → the GitRepository
 - [ ] Add `k8s/repo-sync/alerts.yaml` — Provider `chudmax-notifications` (`type: generic`, channel address from its Secret) + Alert (`eventSeverity: info`, eventSources GitRepository + ArtifactGenerator)
 - [ ] Add `k8s/repo-sync/README.md` — install with `-n` (manifests carry no namespace), the same-namespace rule with the chart release, the secret-keys table, the webhook-path + GitLab "Secret token" note, the channel options, the egress note (source-watcher's storage server), and both phase answers + the fallback
 - [ ] Validate locally: install flux-schema (`flux plugin install schema` or the release binary) and run `flux schema validate k8s/repo-sync --schema-location default`; record the output in the PR
 - [ ] Add a CI workflow validating the directory with flux-schema (pinned release of `fluxcd/flux2/action` with `plugins: schema` and/or `fluxcd/flux-schema/actions/validate`); existing workflows stay green
 - [ ] Cross-check chart docs: `k8s/chart/chudmax-mcp/values.yaml` comment and `k8s/fetcher/README.md` now point at `k8s/repo-sync/` as the ExternalArtifact's owner (pointer updates only — no behavior change)
-- [ ] Propose the PR via `propose_pull_request`; CI green; no secrets, no real repo URLs, no internal hostnames in the public repo; the box untouched
+- [ ] Propose the PR via `propose_pull_request`; CI green; no credentials, no internal proxy hostnames in the public repo (the repo URL itself is public-safe per the CoS ruling); the box untouched; **the PR description carries one clear line flagging the phase-5 CI-capability decision the owner has not made yet (privileged GitHub runners vs self-hosted k3d)**
 - [ ] Call `mark_task_complete` after the PR merges
