@@ -23,6 +23,13 @@ fetcher watch ─► GET the artifact tarball (source-watcher's storage server) 
                  └► unpack, swap /data/current (the volume contract, untouched)       │
                                                                                       │
 Alert (GitRepository + ArtifactGenerator events, severity info) ─► Provider ─► the human's channel
+
+Where alerts land: the Flux controllers emit Kubernetes Events (per-reconcile outcomes —
+new artifacts, failures); notification-controller matches those events against the Alert
+(eventSources + severity) and forwards them through the Provider to the channel address
+held in its Secret. The same events are ALSO visible in-cluster (`kubectl events --for=...`
+and the controllers' own stdout logs) — the Alert+Provider pair is what gets them OUT of
+the cluster to a human-chosen endpoint, so a silent or broken sync is heard, not just logged.
 ```
 
 ## The two answers
@@ -45,7 +52,7 @@ Alert (GitRepository + ArtifactGenerator events, severity info) ─► Provider 
 | `gitrepository.yaml` | GitRepository `chudmax-source`: `spec.url` = the private repo's HTTPS URL (public-safe per the steering brief), `ref.branch: main`, `interval: 1m`, `secretRef: chudmax-repo-auth`; no `spec.ignore` |
 | `artifactgenerator.yaml` | ArtifactGenerator: source alias `repo` → `chudmax-source`; artifact `chudmax-tickets`, `originRevision: "@repo"`, four copy rules (`tickets.md`, `STATE.md`, `docs/**`, `decisions/**`) |
 | `receiver.yaml` | Receiver: `type: gitlab`, `events: ["Push Hook"]`, `secretRef: webhook-token`, `resources` → the GitRepository |
-| `alerts.yaml` | Provider `chudmax-notifications` (`type: generic`, channel address from its Secret) + Alert: `eventSeverity: info`, eventSources GitRepository + ArtifactGenerator |
+| `alerts.yaml` | Provider `chudmax-notifications` (`type: generic`, channel address from its Secret) + Alert: `eventSeverity: info` (human-confirmed), eventSources GitRepository + ArtifactGenerator; the Alert matches the controllers' Kubernetes Events and delivers them via the Provider — the in-cluster copies stay visible in `kubectl events` and controller logs |
 | `README.md` | install, namespace rule, secret-keys table, webhook path, channel options, both answers + the fallback |
 
 - Manifests omit `metadata.namespace`; install with `kubectl -n <release-ns> apply -f k8s/repo-sync/`. The namespace must be the chart release's — the Role and the generated ExternalArtifact are namespaced to it.
