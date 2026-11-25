@@ -94,6 +94,8 @@ Phase 5 (parallel) owns `.github/workflows/rehearsal*` and `k8s/rehearsal/`; the
 - **Labels vocabulary** (`chudmax/AGENTS.md`): `verified-here` / `handoff-reported` / `speculation` (kind-in-CI, pod→bridge-gateway, the auto allowedHosts default's real-world fit).
 - **Docs rule:** this branch and the code repos are public — the engine's real LAN address, credentials, and internal proxy hostnames never appear; the card's literal address is deliberately absent from these docs.
 - **Debugging a Strata-fronted endpoint from a pod: always set the Host header explicitly.** 403 from the guard looks like a network block in every ladder/probe construction; `curl -H 'Host: <service-name>' http://<ip>:<port>/health` is the correct probe shape (the Service's DNAT preserves the client's Host, so this is also the faithful rehearsal of the real path).
+- **`kubectl run --rm -i` loses fast containers' stdout (the attach race):** curl answers in milliseconds — refused, 403, or 200 alike — and exits before the attach stream opens; the output is lost and EVERY probe reads as empty, successes included. Never read a one-shot container's result from the attach stream: create the pod without -i, wait for completion, then `kubectl logs`. (Three CI runs were diagnosed blind by this.) Also: a diagnostic `echo` inside a function called under `$( )` is captured, not printed — diagnostics go to STDERR.
+- **Assert CRD shapes, not words:** the read-only mcp chart's templates carry "Cilium" inside explanatory YAML comments that render verbatim; a bare `grep -qi cilium` on a full umbrella render is a false positive. `grep -E 'kind: *CiliumNetworkPolicy|apiVersion: *cilium\.io/'` is the assertion.
 
 ## What this settles
 
