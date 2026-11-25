@@ -1,0 +1,12 @@
+dependencies:
+- name: chudmax-engine
+  repository: file://subcharts/chudmax-engine
+  version: 0.1.0
+- name: chudmax-web
+  repository: file://subcharts/chudmax-web
+  version: 0.1.0
+- name: chudmax-mcp
+  repository: file://../../chart/chudmax-mcp
+  version: 0.1.0
+digest: sha256:220456f6d80bd626f8960bec549d40dc0322485a6d6f2fc149b2a92fc8b9de07
+generated: "2026-11-25T21:41:39.991075427Z"

@@ -1,0 +1,35 @@
+# Default values for the chudmax umbrella — the whole installable stack:
+# the engine pointer, the web (Strata with its in-process mock engine) and the
+# mcp pod (the fetcher sidecar + the published canonical ticket server).
+
+nameOverride: ""
+fullnameOverride: ""
+
+engine:
+  enabled: true
+  fullnameOverride: chudmax-engine
+  endpoint:
+    # SET THIS TO YOUR ENGINE'S ADDRESS (the engine subchart's pointer). Empty
+    # → the engine Service renders without endpoints and its NOTES remind the
+    # installer. Public artifacts carry only RFC 5737 documentation IPs; the
+    # real address is installer-supplied and never committed (phase 11+).
+    host: ""
+    port: 8080
+
+web:
+  enabled: true
+  fullnameOverride: chudmax-web
+  # The web subchart's own defaults carry the install (Strata --engine mock on
+  # ghcr.io/urmanac/chudmax/web:0.1.0 — unpublished until phase 10; allowedHosts
+  # auto; probes on /health). Override web.* to shape it.
+
+mcp:
+  enabled: true
+  fullnameOverride: chudmax-mcp
+  # The mcp subchart's own defaults (4b) carry the install: server.enabled
+  # true with the published canonical tickets-mcp image, the ExternalArtifact
+  # name chudmax-tickets, the hardened pod shape, the NetworkPolicies. This
+  # umbrella overrides nothing by default — the fetcher waits for an
+  # ExternalArtifact that does not exist until the repo-sync objects run
+  # (phase 5 rehearses them; kind-smoke.sh asserts the fetcher's waiting is a
+  # live apiserver 404, not a policy block).
