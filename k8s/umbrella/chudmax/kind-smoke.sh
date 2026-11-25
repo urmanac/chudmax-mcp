@@ -55,6 +55,7 @@ docker ps >/dev/null || die "the docker daemon is not running (kind runs on the 
 say "1. kind up: $CLUSTER (docker provider, stock kindnet - NetworkPolicies ARE enforced)"
 kind create cluster --name "$CLUSTER" --wait 240s >/dev/null
 kubectl config current-context | grep -q "kind-$CLUSTER" || die "the kind context is not current"
+kubectl create namespace "$NS" >/dev/null 2>&1 || true   # the step-5 probes target it before helm creates it
 
 say "2. Strata at the pin ($STRATA_PIN)"
 git init -q "$WORK/strata"
