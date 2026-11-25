@@ -104,10 +104,14 @@ done
 echo "  mock engine up (host-side /health: $code)"
 
 probe() { # probe <url> — an in-cluster pod; prints the HTTP code and never hides why it missed
+  # The Host header is the Service's short name — what a same-namespace client
+  # sends and what the Service's DNAT preserves end to end. An IP-literal URL
+  # would send the IP as Host and Strata's DNS-rebinding guard would 403 it:
+  # the earlier "unreachable from pods" failures were that guard, not routing.
   local code
   code=$(kubectl run "probe-$(printf '%s' "$1" | md5sum | cut -c1-8)" --rm -i --restart=Never \
     --image="$CURL_IMAGE" -n "$NS" --quiet -- \
-    curl -s -o /dev/null -m 5 -w '%{http_code}' "$1") || true
+    curl -s -o /dev/null -m 5 -w '%{http_code}' -H 'Host: chudmax-engine' "$1") || true
   [ "$code" = "200" ] || echo "  probe miss: $1 → ${code:-no-answer}"
   printf '%s' "$code"
 }
@@ -130,7 +134,7 @@ try_endpoint() { # try_endpoint <ip>: probe from a pod; on 200 pin ENGINE_HOST a
   return 1
 }
 if try_endpoint "$GW"; then
-  EN_ROUTE="docker-bridge gateway (pod → gateway-ip → host-side userland-proxy → the mock)"
+  EN_ROUTE="docker-bridge gateway (pod → gateway-ip → host-side userland-proxy → the mock; Host: the Service name)"
 elif try_endpoint "$CIP"; then
   EN_ROUTE="mock container bridge IP (the gateway route was unreachable; recorded honestly)"
 else
