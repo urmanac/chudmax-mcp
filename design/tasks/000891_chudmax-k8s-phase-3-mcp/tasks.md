@@ -10,6 +10,6 @@
 - [x] `helm lint` passes; `helm template` renders with default values (server disabled) and with a custom variant (server enabled, custom ExternalArtifact name/port) — record both outputs in the proof
 - [x] CI `.github/workflows/image-chart.yml`: chart job (lint + template) and image job (podman, both architectures, no registry push; qemu arm64 smoke best-effort); record Docker buildx as the fallback if podman-in-Actions frictions out
 - [x] Update the repo README: extend "Bring your own MCP server" — how to enable the optional container (example values), the volume-contract pointer to `k8s/fetcher/README.md`, the phase-4 ExternalArtifact dependency, and the unpublished-default-tag note
-- [ ] Flag the missing LICENSE in the PR description (decision deferred to the owner); do not add a LICENSE file
+- [x] Flag the missing LICENSE in the PR description (decision deferred to the owner); do not add a LICENSE file
 - [x] Record the proof in this task directory (helix-specs): podman build/smoke results, helm lint/template outputs, CI runs green, three labels applied
-- [ ] Open the PR via `propose_pull_request` (owner's standing delegation — no approval wait); CI green and in-sandbox verification done before anyone merges; merge authority is the CoS/owner; do not merge it yourself and do not call `mark_task_complete` until the PR is merged
+- [x] Open the PR via `propose_pull_request` (owner's standing delegation — no approval wait); CI green and in-sandbox verification done before anyone merges; merge authority is the CoS/owner; do not merge it yourself and do not call `mark_task_complete` until the PR is merged
