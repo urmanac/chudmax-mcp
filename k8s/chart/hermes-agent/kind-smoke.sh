@@ -56,9 +56,16 @@ say "docker bridge gateway: $GW"
 
 # ---------- 1. images: upstream pull + the mcp pod's two, podman-first ----------
 say "pulling the upstream image (${HERMES_IMAGE})..."
-docker pull "$HERMES_IMAGE"
+# CI receipt (run #1): the manifest LIST cannot be `kind load docker-image`-ed —
+# ctr's --all-platforms import aborts on the arm64 blob the docker daemon never
+# pulled ("content digest sha256:2223ae…: not found"). Pull the single-platform
+# per-arch tag (the runner is amd64), re-tag to the chart-default reference, and
+# load that — the node then serves :v0.23.4 under pullPolicy: IfNotPresent.
+HERMES_PULL="nousresearch/hermes-agent:v0.23.4-amd64"
+docker pull "$HERMES_PULL"
+docker tag "$HERMES_PULL" "$HERMES_IMAGE"
 kind load docker-image "$HERMES_IMAGE" --name "$CLUSTER"
-receipt "upstream image pulled and loaded (${HERMES_IMAGE})"
+receipt "upstream image pulled (per-arch) and loaded as ${HERMES_IMAGE}"
 
 say "building the mcp pod's images with podman (the chart-default tags)..."
 podman build --platform linux/amd64 -t ghcr.io/urmanac/chudmax/fetcher:0.1.0 \
