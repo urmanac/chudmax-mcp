@@ -54,18 +54,21 @@ cfg=json.load(sys.stdin)[0]['IPAM']['Config']
 print(next(c['Gateway'] for c in cfg if c.get('Gateway','').count('.')==3))")
 say "docker bridge gateway: $GW"
 
-# ---------- 1. images: upstream pull + the mcp pod's two, podman-first ----------
-say "pulling the upstream image (${HERMES_IMAGE})..."
-# CI receipt (run #1): the manifest LIST cannot be `kind load docker-image`-ed —
-# ctr's --all-platforms import aborts on the arm64 blob the docker daemon never
-# pulled ("content digest sha256:2223ae…: not found"). Pull the single-platform
-# per-arch tag (the runner is amd64), re-tag to the chart-default reference, and
-# load that — the node then serves :v0.23.4 under pullPolicy: IfNotPresent.
-HERMES_PULL="nousresearch/hermes-agent:v0.23.4-amd64"
-docker pull "$HERMES_PULL"
-docker tag "$HERMES_PULL" "$HERMES_IMAGE"
-kind load docker-image "$HERMES_IMAGE" --name "$CLUSTER"
-receipt "upstream image pulled (per-arch) and loaded as ${HERMES_IMAGE}"
+# ---------- 1. images: the node pre-warm + the mcp pod's two, podman-first ----------
+say "pre-warming the node's containerd store with the upstream image (${HERMES_IMAGE})..."
+# CI receipts (runs #1 and #2): the docker-daemon intermediary fails both ways —
+# the manifest LIST fails `kind load docker-image` (ctr's --all-platforms import
+# hits the arm64 blob the daemon never pulled: "content digest sha256:2223ae…:
+# not found"), and the per-arch tag `v0.23.4-amd64` is NOT pullable (the per-arch
+# tags exist for rc/canary builds; the final release publishes only list tags).
+# The node's containerd resolves multi-arch lists natively — the production path:
+# crictl pre-pull, with the kubelet's own pull (pullPolicy: IfNotPresent) as the
+# fallback when crictl is unavailable.
+if docker exec "${CLUSTER}-control-plane" crictl pull "$HERMES_IMAGE"; then
+  receipt "node pre-pulled ${HERMES_IMAGE} via crictl (multi-arch resolved natively)"
+else
+  say "crictl pre-pull failed — the kubelet will pull at schedule time (IfNotPresent)"
+fi
 
 say "building the mcp pod's images with podman (the chart-default tags)..."
 podman build --platform linux/amd64 -t ghcr.io/urmanac/chudmax/fetcher:0.1.0 \
