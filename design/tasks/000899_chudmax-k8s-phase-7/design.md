@@ -1,0 +1,71 @@
+# Design: chudmax k8s phase 7 Flagger canary rehearsal in CI
+
+> **Public mirror** — the full-fidelity record (including deployment specifics) lives in the private source-of-truth repo.
+
+One kind cluster in one CI job rehearses both halves of the Flagger story: a promoted upgrade and a webhook-caught rollback, over the SAME target deployment, with the canonical tickets-mcp serving real data behind it. The spike's two open mechanics are settled by prior phases: the McpHub accepts servers by URL (verified against the public fork), and the ready-gated mcp Service path needs the artifact chain (verified by phase 5).
+
+## Shape (kind rehearsal)
+
+```
+CI job (GitHub-hosted ubuntu runner — the phase-5/6 pattern)
+  runner side: gittestserver (Smart HTTP, k8s/rehearsal/gittestserver by path)
+      ▲ one git push (the seed ticket)
+  kind cluster (k8s/rehearsal/kind-config.yaml by path; Cilium per the phase-5 recipe)
+    ns flux-system: source-watcher (flux v2.10.1) ──► ExternalArtifact chudmax-tickets
+    ns chudmax:
+      ├─ mcp pod: fetcher + canonical server
+      │     fetcher unpacks → /data/current → pod READY → Service chudmax-mcp:8080 serves
+      ├─ web Deployment chudmax-web (--engine mock, --mcp-config /etc/strata/mcp-config.json)
+      │     hub ──► http://chudmax-mcp:8080/mcp   (namespaced tickets__* tools)
+      ├─ Flagger (ns flagger, meshProvider=gatewayapi:v1):
+      │     <name>-primary Deployment; <name>/<name>-canary/<name>-primary Services;
+      │     HTTPRoute chudmax-web (weighted backendRefs — the 10%→50% stepping surface)
+      │     pre-rollout webhook ──► loadtester pod (ns chudmax): bash suite —
+      │        /health 200; /v1/mcp/tools byte-equal primary↔canary + tickets__* present;
+      │        one chat turn (scripted MockEngine reply); the seven selftest questions
+      │     MetricTemplate ──► canned Prometheus responder (vector(1) always passes)
+      └─ Gateway chudmax-gateway (same ns; referenced by gatewayRefs; nothing dials it)
+```
+
+Traffic in the rehearsal: kubelet probes + the pre-rollout suite only — "test traffic stays small" is literal (no gateway load, no `hey` fleet).
+
+## Write set
+
+- `k8s/canary/**` (new): `README.md`, `gateway.yaml`, `canned-prometheus.yaml`, `metric-template.yaml`, `mcp-config-broken.yaml`, `canary.yaml`, `values-rehearsal.yaml`, `canary-rehearse.sh`.
+- `.github/workflows/canary-kind.yml` (new): the pre-flight job + the kind job.
+- `k8s/umbrella/chudmax/subcharts/chudmax-web/**`: the `mcpConfig` knob (ConfigMap + mount + `--mcp-config` arg, all gated), the `service.enabled` knob (Service + test hook gated), values comments.
+- Read-only by path from merged main: `k8s/rehearsal/{kind-config.yaml,gittestserver/,gitrepository-test.yaml}`, `k8s/repo-sync/{gitrepository.yaml,artifactgenerator.yaml,artifact-ingress.yaml}`. (The phases-5/6 "duplicate, never reference" rule governed ACTIVE parallel branches; everything here is merged, so path reuse is the norm — recorded as a deliberate deviation.)
+- Phase 8 may run in parallel — disjoint write set, no coordination beyond the guard above.
+
+## Key decisions
+
+1. **The promoted upgrade is a tag-swap on the chart's default image.** The umbrella installs `ghcr.io/urmanac/chudmax/web:0.1.0` (loaded, `IfNotPresent`); `kubectl set image ...web=...:0.1.1` (same bytes, retagged — the phase-6 build is the one image; no rebuild) triggers Flagger's revision detection. The pre-rollout suite passes → weight steps 10→50 → Flagger copies the template to `<name>-primary` and promotes. One `kubectl` call, one revision.
+2. **The broken upgrade rides the VERIFIED failure mode: the hub silently omits a server that fails to start.** The rehearsal applies a second, well-formed ConfigMap (`mcp-config-broken.yaml`) whose server URL is unreachable, and ONE combined JSON patch swaps the image tag (`0.1.1-broken`, same bytes — receipt legibility) AND the `--mcp-config` arg to the broken path. The canary pod stays Ready (`/health` fine — probes pass), so the pre-rollout webhook RUNS and gates: `GET /v1/mcp/tools` returns no `tickets__*` tools → count assert fails → Flagger halts advancement → threshold reached → "Canary failed! Scaling down" — the weight never leaves the primary. A nonexistent-config-path variant was rejected because the config-load-failure behavior (silently empty vs crash-loop) is UNVERIFIED — a crash-looping canary would be caught by the progress deadline, not by the webhook gate, which is the weaker story. A port-drift variant (args `--port 8081`) was rejected for the same reason: the readiness probe, not the webhook, would catch it.
+3. **The `--mcp-config` args index is derived from the rendered template, never hard-coded** — the script greps the rendered args list for the config path's position before building the JSON patch (the chart may grow args later).
+4. **The metric dimension is stubbed with ONE always-passing MetricTemplate.** Query `vector(1)` with a `thresholdRange`, provider address = a ~15-line canned responder (Deployment + Service, `python:3.12-slim` pinned, returns the Prometheus success payload for any `/api/v1/query`) — the phase-5 "alert sink" pattern. Rationale: deterministic, completes the analysis object, exercises the MetricTemplate machinery without the gateway-metrics rabbit hole. Alternatives recorded: (a) omit `analysis.metrics` entirely — UNVERIFIED whether the CRD/logic accepts an empty metrics list; try it first at implementation and delete the canned responder if valid; (b) a canned responder that fails on demand (a stateful toggle) driving a METRIC-based rollback — a richer second rollback story, deferred unless the human asks for it (Open Question 3).
+5. **Gateway without an LB implementation, no MetalLB by default.** The Gateway object exists in the release namespace (same-ns route — no ReferenceGrant) and is referenced by `spec.service.gatewayRefs` (REQUIRED by the gatewayapi provider — verified from the tutorial). Nothing dials the Gateway: Flagger's weight machinery is provable from the HTTPRoute object + canary events, and the suite/loadtest target the Services directly. **The flagged `speculation`:** whether Flagger blocks analysis on Gateway readiness (address assignment) — if the canary stalls in Initialized, the fallback ladder is: (1) MetalLB L2 on the kind network (the kind-docs pattern), (2) Envoy Gateway as the implementation, (3) plain kindnet + no Cilium. Each fallback is additive to the same script.
+6. **Cilium stays the CNI** (the phase-5 recipe verbatim — `--policy-cidr-match-mode=nodes`): the FULL artifact chain (flux policies + the mcp chart's auto-resolved CNP + `artifact-ingress.yaml`) is proven under Cilium by phase 5; a kindnet variant would re-prove an unproven combination to save ~4 minutes. The chart's `apiServer.mode: auto` resolves either way.
+7. **The artifact chain is REUSED BY PATH, not copied.** Phase 5's machinery is merged on main: the rehearsal builds its gittestserver helper, applies the repo-sync test manifests (`gitrepository.yaml`, `artifactgenerator.yaml`, `artifact-ingress.yaml`) and pushes the fixture repo once. Real data flows: `list_tickets` answers with the seed ticket, `repo_facts` reports the artifact revision — the selftest questions get contract answers. The recorded lighter alternative (no artifact; a values override skipping the fetcher's readiness gate) was rejected: it edits the shared mcp chart mid-flight and downgrades the selftest receipts to no-data stubs.
+8. **The mcp wiring lives in the Deployment template via a chart knob** (`web.mcpConfig` → inline ConfigMap + mount + arg) — Flagger copies the canary's template from the target, so BOTH versions get the hub config automatically; the hub's URL (`http://chudmax-mcp:8080/mcp`) is release-shape-derived (the umbrella's `fullnameOverride`s pin `chudmax-mcp`; port = the mcp chart's `server.port` 8080). The canonical server has NO Host guard (verified — only optional bearer auth, off here), so the hub's outbound calls need no extra config. Alternative recorded: raw `extraVolumes`/`extraVolumeMounts` passthroughs — rejected: more knobs, the same mount rendered wrong is easier.
+9. **`web.service.enabled` (new knob) avoids the Flagger Service collision.** Flagger generates `<name>`, `<name>-canary`, `<name>-primary` Services; the chart's unconditional `chudmax-web` Service would collide. Default true (no default-render change); the canary install sets it false; the test hook gates on it too. **Constraint recorded:** the rehearsal installs ONCE and mutates only with kubectl — a later `helm upgrade` would revert Flagger's template mutations (helm still owns the object).
+10. **The pre-rollout suite is jq-free and self-calibrating.** Tool counts compare as **byte-equality of the two `GET /v1/mcp/tools` bodies** (same hub config, same server → identical deterministic JSON) plus grep-presence of the namespaced names — no jq dependency (the loadtester image's toolset is unverified). The selftest questions run through `POST /v1/mcp/call` with namespaced names (`tickets__list_tickets`, `tickets__repo_facts`, `tickets__get_ticket{id: <seed>}`, plus the read-only four asserted non-empty); the seed id is discovered from `list_tickets`' first `T-` line; exact response substrings are pinned from the sandbox pre-flight receipts, never assumed. The suite retries bounded (hub registration is async) and fits under the webhook timeout.
+11. **Timing budget.** Two upgrades × (interval-stepping to maxWeight 50 + webhook runs) ≈ 5–7 intervals each at 30s–1m ≈ 10–15 min; cluster + Cilium + flux + images ≈ 8–10 min; the chain + installs ≈ 5 min → **25–35 min, `timeout-minutes: 60`** (phase 5's 45 was tight without the canary iterations). The interval value is an implementation choice (the tutorial uses 1m; the quickstart uses 10s) — recorded in the receipt.
+12. **Proofs are object-based, not traffic-based.** The HTTPRoute weight timeline is sampled per interval (`kubectl get httproute chudmax-web -o jsonpath` over `backendRefs[*].weight`); the promotion/rollback are receipted by canary status + events verbatim; both suites' outputs are echoed. The "10% at a time to 50%" claim is the weight timeline itself. `speculation` labels only where mechanics are unverified (the Gateway-readiness gate; per-iteration vs once-per-rollout pre-rollout execution — the acceptance asserts are robust to either).
+
+## Notes for future agents (learnings)
+
+- **Spike Open Question 2 (split the largest rehearsal?)** — resolved by the human's default: one card. Open Question 1 surfaces it at review.
+- **Spike's "does the fork's hub accept the server by url?"** — settled: YES (`serve/mcp.py` HttpTransport, Streamable HTTP, URL-config entries; public clone @ `de34ebaa…`, tag `v0.2.21-mbp.rtx.1`). The REMAINING unknown is the hub ↔ canonical-server integration (the server is a non-standard one-JSON-per-POST endpoint; the hub tolerates it if it parses the single JSON response — the sandbox pre-flight proves this in userspace, no cluster needed).
+- **The silent-omission behavior is the rollback's engine:** a hub config pointing at an unreachable server yields zero tools with the web otherwise healthy — the ONLY deterministic way to make the canary Ready-but-failing so the pre-rollout webhook (not the probe, not the progress deadline) is what catches the broken upgrade.
+- **The webhook suite curls Flagger-generated Service names** (`chudmax-web-canary`, `chudmax-web-primary`) — these are NOT in the chart's `allowedHosts: auto` render (the chart does not know Flagger's names) → the rehearsal's explicit `web.allowedHosts` list must include them (a list is used verbatim — the phase-6 short-name lesson applies: same-namespace curls send short names).
+- **`kubectl patch --type=json` with multiple ops in ONE call = ONE template mutation = ONE Flagger revision** — mixing `set image` and a follow-up args patch would create two revisions and race Flagger's detection.
+- **The loadtester executes webhook `metadata.cmd` under bash** (`type: bash`); the webhook url follows the tutorial shape `http://<loadtester-release>.<ns>/`; the loadtester must be installed in the release namespace so the suite's short-name curls resolve (and the same-namespace admission keeps the no-NetworkPolicy web reachable).
+- **Pins table:** kind v0.33.0; Cilium per phase 5's recipe; flux v2.10.1 (`--components-extra=source-watcher`); flagger + loadtester chart versions pinned at implementation (fetch current stable from the flagger repo's releases); `python:3.12-slim` for the canned responder; the Strata image = the phase-6 build at the README pins-table SHA (`de34ebaa…`, tag `v0.2.21-mbp.rtx.1`).
+- **kind cannot run in this sandbox** (phase-6 constraint, verbatim reason recorded there) — the sandbox CAN: helm lint/template/kubeconform, image builds, and the userspace pre-flight (both servers on loopback). The kind receipts are CI-authoritative.
+- **Hygiene reminders (hard):** no registry push (public images are PULLED, our images are LOADED); RFC 5737 `203.0.113.10` wherever a doc IP is needed; no LAN/credential/internal hostname; three labels on every claim; the mcpConfig's dead-URL fixture uses a never-resolving in-cluster name, not a public IP.
+
+## What this settles
+
+- The canary rehearsal story end to end: fixtures, the two upgrades, the gate, the receipts — the largest rehearsal, unsplit.
+- The mcp Service's ready-gated path in a rehearsal (phase 6's explicit pointer): the artifact chain ships the seed and the Service serves.
+- The hub's URL-mode integration with the canonical server (pre-flight receipt) — phase 15's attach route inherits a proven hub pattern.

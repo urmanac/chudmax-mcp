@@ -1,0 +1,38 @@
+# Implementation Tasks: chudmax k8s phase 7 Flagger canary rehearsal in CI
+
+**Setup and verification**
+- [ ] Re-read this spec plus the phase-5/6 task docs; confirm `main` is at the preconditions' SHA (or later, with phase 8's disjoint write set respected); branch off current `main`
+- [ ] Sandbox pre-flight: run the canonical server (`python3 k8s/tickets-mcp/tools/mcp/ticket_mcp.py --http <port> --host 127.0.0.1` with a fixture data-root) and Strata's serve.server (`--engine mock --mcp-config` pointing at it) side by side on loopback; curl the hub's `GET /mcp`, `GET /v1/mcp/tools` (namespaced `tickets__*`), `POST /v1/mcp/call` (the selftest questions) and one chat turn — pin the exact response shapes and the scripted chat reply for the webhook suite's asserts (`verified-here` receipts into proofs.md); re-confirm the silent-omission behavior with a dead-URL config entry
+- [ ] Re-fetch the Flagger gatewayapi tutorial from the repo path recorded in the preconditions (the flagger.app URL 404s); re-pin the canary CRD shape, the webhook url path convention, the loadtester install flags, the generated object names, and the current stable flagger/loadtester chart versions
+
+**Web chart wiring (`k8s/umbrella/chudmax/subcharts/chudmax-web/`)**
+- [ ] values.yaml: add `mcpConfig` (object, default unset — comment: the phase-7 wiring, the ConfigMap render documented) and `service.enabled` (default true — comment: Flagger-managed installs turn it off)
+- [ ] templates: new `mcp-config.yaml` (inline ConfigMap rendered only when `mcpConfig` is set); `deployment.yaml` gains the volume + volumeMount (fixed path, subPath, readOnly) + the `--mcp-config <path>` arg, ALL gated on `mcpConfig`; `service.yaml` and the test hook gated on `service.enabled`; NOTES/README touched where they name the Service
+- [ ] Local proof: `helm lint` + `helm template` ×2 (defaults — byte-identical to phase 6's render, diff receipt; variant with `mcpConfig` set + `service.enabled: false`) + kubeconform -strict on both renders
+
+**Canary fixtures (`k8s/canary/`)**
+- [ ] README.md — the shape, the pins table, what the rehearsal proves and what it deliberately stubs
+- [ ] `gateway.yaml` — Gateway in the release namespace, HTTP listener :80, allowedRoutes same-namespace
+- [ ] `canned-prometheus.yaml` — tiny Deployment + Service (`python:3.12-slim` pinned) answering any `/api/v1/query` with the success payload `{"status":"success","data":{"result":[{"value":[<ts>,"1"]}]}}`
+- [ ] `metric-template.yaml` — provider address = the canned Service; query `vector(1)`; thresholdRange covering 1
+- [ ] `mcp-config-broken.yaml` — well-formed hub config whose server URL is unreachable (a never-resolving in-cluster name, no public IP)
+- [ ] `canary.yaml` — targetRef the web Deployment; `spec.service` port 8080 / targetPort http / hosts / gatewayRefs (same-ns Gateway); `analysis` interval, threshold, `maxWeight: 50`, `stepWeight: 10`, progressDeadlineSeconds; the one MetricTemplate; the pre-rollout webhook (bash suite: `/health` 200; `/v1/mcp/tools` byte-equal primary↔canary + `tickets__*` present; one chat turn with the scripted reply; the seven selftest questions via `POST /v1/mcp/call` — the seed id discovered from `list_tickets`; retry loops bounded under the webhook timeout; jq-free asserts per design decision 10)
+- [ ] `values-rehearsal.yaml` — `engine.enabled: false`, `web.service.enabled: false`, `web.allowedHosts` explicit list including `chudmax-web-canary`/`chudmax-web-primary` (+ FQDN forms, loopback), `web.mcpConfig` = `{"mcpServers": {"tickets": {"url": "http://chudmax-mcp:8080/mcp"}}}`
+
+**The rehearsal script (`k8s/canary/canary-rehearse.sh`)**
+- [ ] Cluster up: kind with `k8s/rehearsal/kind-config.yaml` (by path) → Cilium per the phase-5 recipe → install the Gateway API CRDs + apply `gateway.yaml`
+- [ ] Data path: flux install (pinned, `--components-extra=source-watcher`) → build + `kind load image-archive` the three images (chart-default tags, no registry) → `helm dependency build` → `helm install` the umbrella with `values-rehearsal.yaml` → build the gittestserver helper (by path), pre-flight `git ls-remote`, apply `k8s/repo-sync/{gitrepository.yaml,artifactgenerator.yaml,artifact-ingress.yaml}`, one seed push → wait for the mcp pod Ready AND the Service's endpoints to appear
+- [ ] Canary install: Flagger (`meshProvider=gatewayapi:v1`, `prometheus.install=false`, chart version pinned) + loadtester (pinned) in the release namespace → apply `canned-prometheus.yaml`, `metric-template.yaml`, `canary.yaml` → wait for the Canary to register and the generated objects (`-primary` Deployment, `-canary`/`-primary` Services, the HTTPRoute) to appear
+- [ ] The GOOD upgrade: derive the args index from the rendered template → `kubectl set image ...web=...:0.1.1` → sample the HTTPRoute `backendRefs[*].weight` every interval → the pre-rollout suite passing (its output captured) → the promotion events ("Copying template spec …", "Promotion completed") and canary phase `Promoted` → record
+- [ ] The BROKEN upgrade: ONE combined JSON patch (image → `0.1.1-broken`; add the broken-config volume + mount; swap the `--mcp-config` arg to the broken path) → the pre-rollout suite failing on the tool asserts (output captured) → the halt events → "Canary failed! Scaling down" → assert the HTTPRoute weight never left 0 → record
+- [ ] Receipts + teardown: canary status/events verbatim, the weight timeline, both suites' outputs, the rollback's unchanged weight → the CI step summary; on failure `kind export logs`; cluster deleted under `if: always()`
+
+**CI (`.github/workflows/canary-kind.yml`)**
+- [ ] Job 1 (pre-flight, no cluster): the hub↔canonical-server integration proof (as scripted in setup), chart lint/template ×2/kubeconform, the hygiene grep (RFC 5737 `203.0.113.10` deliberately escapes the RFC1918 pattern)
+- [ ] Job 2 (kind, `ubuntu-latest`, kind v0.33.0, `timeout-minutes: 60`): `canary-rehearse.sh` end to end — `speculation` until the first green run (the authoritative receipt for the Gateway-readiness question and the per-iteration webhook behavior; the fallback ladder in design decision 5)
+- [ ] Existing workflows stay green; no registry push; public images pinned; no secrets
+
+**Proofs and flow**
+- [ ] proofs.md in this task dir with the three labels: the pre-flight receipts, the local chart proofs, and the transcribed CI receipts (promotion + rollback events verbatim, the weight timeline, both suites)
+- [ ] Implementation corrections folded back into these docs (the phases-5/6 doc-sync rule) — including which fallback (if any) the Gateway-readiness question required and the final interval value
+- [ ] One PR via `propose_pull_request` (no approval wait); conventional commits; three labels on every claim; box untouched; nothing on `main` unreviewed; no registry push; the missing-LICENSE flag in the PR description; merge authority CoS; `mark_task_complete` only after merge
