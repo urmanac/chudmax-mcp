@@ -1,7 +1,7 @@
 # Implementation Tasks: chudmax k8s phase 7 Flagger canary rehearsal in CI
 
 **Setup and verification**
-- [ ] Re-read this spec plus the phase-5/6 task docs; confirm `main` is at the preconditions' SHA (or later, with phase 8's disjoint write set respected); branch off current `main`
+- [ ] Re-read this spec plus the phase-5/6 task docs; confirm `main` is at the preconditions' SHA (or later, with phase 8's and phase 9's disjoint write sets respected — **no `k8s/hermes/**` or hermes-agent edits, ever**); branch off current `main`
 - [ ] Sandbox pre-flight: run the canonical server (`python3 k8s/tickets-mcp/tools/mcp/ticket_mcp.py --http <port> --host 127.0.0.1` with a fixture data-root) and Strata's serve.server (`--engine mock --mcp-config` pointing at it) side by side on loopback; curl the hub's `GET /mcp`, `GET /v1/mcp/tools` (namespaced `tickets__*`), `POST /v1/mcp/call` (the selftest questions) and one chat turn — pin the exact response shapes and the scripted chat reply for the webhook suite's asserts (`verified-here` receipts into proofs.md); re-confirm the silent-omission behavior with a dead-URL config entry
 - [ ] Re-fetch the Flagger gatewayapi tutorial from the repo path recorded in the preconditions (the flagger.app URL 404s); re-pin the canary CRD shape, the webhook url path convention, the loadtester install flags, the generated object names, and the current stable flagger/loadtester chart versions
 
@@ -9,6 +9,7 @@
 - [ ] values.yaml: add `mcpConfig` (object, default unset — comment: the phase-7 wiring, the ConfigMap render documented) and `service.enabled` (default true — comment: Flagger-managed installs turn it off)
 - [ ] templates: new `mcp-config.yaml` (inline ConfigMap rendered only when `mcpConfig` is set); `deployment.yaml` gains the volume + volumeMount (fixed path, subPath, readOnly) + the `--mcp-config <path>` arg, ALL gated on `mcpConfig`; `service.yaml` and the test hook gated on `service.enabled`; NOTES/README touched where they name the Service
 - [ ] Local proof: `helm lint` + `helm template` ×2 (defaults — byte-identical to phase 6's render, diff receipt; variant with `mcpConfig` set + `service.enabled: false`) + kubeconform -strict on both renders
+- [ ] Phase-6 polish (while in `k8s/umbrella/`, both verified-here): fix `kind-smoke.sh`'s stale `--set mcp.networkPolicy.egress.apiServer.cidr=$VIP/32` → `cidrs[0]=$VIP/32` (the chart's list key — the orphan singular key silently leaves the 10.96.0.0/12 default in the ipBlock); fix `chudmax-engine/values.yaml`'s "an IP or a DNS name" comment → IPv4-only (the EndpointSlice is `addressType: IPv4`; DNS names belong to the README's legacy-Endpoints alternative)
 
 **Canary fixtures (`k8s/canary/`)**
 - [ ] README.md — the shape, the pins table, what the rehearsal proves and what it deliberately stubs
@@ -17,7 +18,7 @@
 - [ ] `metric-template.yaml` — provider address = the canned Service; query `vector(1)`; thresholdRange covering 1
 - [ ] `mcp-config-broken.yaml` — well-formed hub config whose server URL is unreachable (a never-resolving in-cluster name, no public IP)
 - [ ] `canary.yaml` — targetRef the web Deployment; `spec.service` port 8080 / targetPort http / hosts / gatewayRefs (same-ns Gateway); `analysis` interval, threshold, `maxWeight: 50`, `stepWeight: 10`, progressDeadlineSeconds; the one MetricTemplate; the pre-rollout webhook (bash suite: `/health` 200; `/v1/mcp/tools` byte-equal primary↔canary + `tickets__*` present; one chat turn with the scripted reply; the seven selftest questions via `POST /v1/mcp/call` — the seed id discovered from `list_tickets`; retry loops bounded under the webhook timeout; jq-free asserts per design decision 10)
-- [ ] `values-rehearsal.yaml` — `engine.enabled: false`, `web.service.enabled: false`, `web.allowedHosts` explicit list including `chudmax-web-canary`/`chudmax-web-primary` (+ FQDN forms, loopback), `web.mcpConfig` = `{"mcpServers": {"tickets": {"url": "http://chudmax-mcp:8080/mcp"}}}`
+- [ ] `values-rehearsal.yaml` — `engine.enabled: false`, `web.service.enabled: false`, `web.mcpConfig` = `{"mcpServers": {"tickets": {"url": "http://chudmax-mcp:8080/mcp"}}}`, and `web.allowedHosts` as the DEFAULT expectation (`chudmax-web-canary`, `chudmax-web-primary`, the HTTPRoute/Gateway host, loopback) that the script OVERRIDES with the live-derived fullname list (never assumed — design.md learnings)
 
 **The rehearsal script (`k8s/canary/canary-rehearse.sh`)**
 - [ ] Cluster up: kind with `k8s/rehearsal/kind-config.yaml` (by path) → Cilium per the phase-5 recipe → install the Gateway API CRDs + apply `gateway.yaml`
