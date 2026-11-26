@@ -146,7 +146,7 @@ done
 kubectl get --raw=/readyz >/dev/null 2>&1 || fail "apiserver not ready 120s after kind create"
 # The kind network may be dual-stack with IPv6 first (the phase-5 lesson) —
 # the test-repo URL must use the IPv4 gateway.
-GW=$("$BUILDER" network inspect kind | jq -r '.[0].IPAM.Config[] | select(.Gateway != null) | select(.Gateway | test("^[0-9]+[.]")) | .Gateway' | head -n1)
+GW=$("$PROVIDER" network inspect kind | jq -r '.[0].IPAM.Config[] | select(.Gateway != null) | select(.Gateway | test("^[0-9]+[.]")) | .Gateway' | head -n1)
 [ -n "$GW" ] || fail "no IPv4 gateway on the kind network"
 GIT_URL="http://${GW}:${GIT_PORT}/repo.git"
 receipt "runner gateway: $GW — the test repo URL the cluster will fetch: $GIT_URL"
