@@ -137,9 +137,22 @@ podman save --format docker-archive -o /tmp/web.tar ghcr.io/urmanac/chudmax/web:
 docker load --input /tmp/web.tar >/dev/null
 rm -f /tmp/web.tar
 docker rm -f hermes-mock-engine >/dev/null 2>&1 || true
+# The mock's window: Strata's MockEngine hardcodes max_context=32768 at this pin
+# (serve/server.py constructs it with no CLI flag, no env knob) — but hermes'
+# own system prompt is ~41K tokens, so NOTHING fits that window and every turn
+# 400s (run #16). Shim the default up to 128K: a python -c wrapper patches
+# MockEngine.__init__'s default, then calls the module's main() with the same
+# args the image entrypoint would get. Rehearsal-only — the image is untouched.
+MOCK_SHIM='import sys
+import serve.server as s
+_orig = s.MockEngine.__init__
+def _patched(self, tokenizer, script, max_context=131072, delay_s=0.0, cycle=False):
+    _orig(self, tokenizer, script, max_context=max_context, delay_s=delay_s, cycle=cycle)
+s.MockEngine.__init__ = _patched
+sys.exit(s.main(["--engine", "mock", "--host", "0.0.0.0", "--port", "8080"]))'
 docker run -d --name hermes-mock-engine --network kind -p 8080:8080 \
   -e STRATA_ALLOWED_HOSTS="chudmax-engine,chudmax-engine.chudmax.svc,chudmax-engine.chudmax.svc.cluster.local,localhost,127.0.0.1" \
-  ghcr.io/urmanac/chudmax/web:0.1.0 --engine mock --host 0.0.0.0 --port 8080 >/dev/null
+  --entrypoint python ghcr.io/urmanac/chudmax/web:0.1.0 -c "$MOCK_SHIM" >/dev/null
 code=""
 for _ in $(seq 1 60); do
   code=$(curl -s -o /dev/null -m 2 -w '%{http_code}' \
@@ -148,7 +161,12 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 [ "$code" = "200" ] || { docker logs hermes-mock-engine; exit 1; }
-receipt "mock engine live on the bridge gateway (${GW}:8080)"
+# /health carries max_context (serve/server.py's health handler): assert the shim
+# took, so the window is a receipted fact before hermes ever calls the mock.
+MOCK_CTX=$(curl -s -H 'Host: chudmax-engine' http://127.0.0.1:8080/health \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("max_context", 0))')
+[ "${MOCK_CTX:-0}" -ge 65536 ] || { say "mock window still ${MOCK_CTX} - the shim did not take"; docker logs hermes-mock-engine; exit 1; }
+receipt "mock engine live on the bridge gateway (${GW}:8080), window ${MOCK_CTX} tokens"
 
 # ---------- 3. three releases, ONE namespace (charts consumed read-only) ----------
 kubectl create namespace "$NS" || true

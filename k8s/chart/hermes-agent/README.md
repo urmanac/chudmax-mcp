@@ -141,8 +141,12 @@ stage2 remap runs before services start).
 `hermes config set auxiliary.compression.context_length 65536` — the
 upstream-sanctioned overrides; the main-model one applies only when the
 base_url host is local (loopback, unqualified host, RFC-1918). The kind
-rehearsal needs both: the mock advertises one model id whose registry window
-is 32,768.
+rehearsal needs both, and the mock side needs the matching change: Strata's
+MockEngine hardcodes `max_context=32768` at the phase-6 pin (no CLI flag, no
+env), while hermes' system prompt alone is ~41K tokens — so the rehearsal
+starts the mock through a python shim that raises the default to 131,072 and
+asserts the window via `/health` (`max_context`). Bumping the Strata pin
+beyond phase 6 is phase-6 surface, not this chart's.
 
 ## Why not the community chart?
 
