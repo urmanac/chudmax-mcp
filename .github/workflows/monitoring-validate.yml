@@ -152,8 +152,12 @@ jobs:
           curl -sf http://127.0.0.1:8095/health > /dev/null || { tail -20 /tmp/strata.log; exit 1; }
       - name: One chat completion
         run: |
+          # max_tokens gives the scripted mock reply room to finish its
+          # thinking preamble: 16 truncated it inside <think> (empty content,
+          # finish_reason length), which is a correct reply for a cut request
+          # but not what this receipt checks
           curl -sf http://127.0.0.1:8095/v1/chat/completions -H 'Content-Type: application/json' \
-            -d '{"messages":[{"role":"user","content":"hi"}],"max_tokens":16}' | tee /tmp/completion.json | head -c 300
+            -d '{"messages":[{"role":"user","content":"hi"}],"max_tokens":256}' | tee /tmp/completion.json | head -c 300
           python3 -c "import json; r=json.load(open('/tmp/completion.json')); assert r['choices'][0]['message']['content'], 'empty reply'"
       - name: The scrape contract the ServiceMonitors pin
         run: |
