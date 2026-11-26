@@ -1,0 +1,11 @@
+apiVersion: v2
+name: hermes-agent
+description: >-
+  The chudmax Hermes chart: the upstream nousresearch/hermes-agent image in one
+  Deployment (Recreate — never two gateways on one data directory) with a
+  persistent HERMES_HOME volume (/opt/data), exposing the keyed
+  OpenAI-compatible API server (default :8642). No k8s API token, no RBAC,
+  no host mounts. Staged here until the phase-10 split to urmanac/hermes-agent.
+type: application
+version: 0.1.0
+appVersion: "0.23.4"
