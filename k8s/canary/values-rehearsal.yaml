@@ -22,8 +22,15 @@ web:
   service:
     enabled: false
   allowedHosts:
+    # The guard strips the port and matches EXACTLY (verified against the pin:
+    # serve/server_parts/http_api.py `_name_in`) — so EVERY name a caller sends
+    # must be here verbatim. The webhook suite dials the FQDN-with-namespace
+    # form (curl sends "chudmax-web-canary.chudmax" after the port strip); the
+    # short forms stay for any same-ns short-name caller.
     - chudmax-web-canary
+    - chudmax-web-canary.chudmax
     - chudmax-web-primary
+    - chudmax-web-primary.chudmax
     - chudmax.rehearsal
     - localhost
     - 127.0.0.1

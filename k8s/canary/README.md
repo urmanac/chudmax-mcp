@@ -78,10 +78,35 @@ but not primary.
 - no LAN addresses, no credentials, no real domains (the route host
   `chudmax.rehearsal` is a rehearsal doc name)
 
-## The pins (filled by the script's assertions, verified at implementation)
+## The pins (verified against upstream sources, 2026-11-26)
 
-kind v0.33.0 · Cilium per phase 5 · flux v2.10.1 (`--components-extra=source-watcher`)
-· flagger + loadtester chart versions (current stable, pinned in the workflow)
-· Traefik chart (current stable; value keys verified against `helm show values`)
-· Gateway API CRDs v1.4.0 (the tutorial's suggestion) · the web image = the
-phase-6 build at the umbrella README's pinned SHA
+kind v0.33.0 · Cilium v1.18.1 (the phase-5 recipe verbatim) · flux v2.10.1
+(`--components-extra=source-watcher`) · **flagger chart 1.45.0** · **loadtester
+chart 0.39.0** · **Traefik chart 43.0.0** (value keys verified against the
+pinned chart source: `providers.kubernetesGateway.enabled`; `gatewayClass.enabled:
+true` default auto-creates the `traefik` GatewayClass — asserted, applied here
+only if missing; `gateway.enabled: true` default deploys an unwanted default
+Gateway — disabled; `metrics.prometheus` is ON by default at the `metrics`
+entryPoint) · **`ports.web.port=80`** (the chart's `web` entrypoint listens on
+8000 by default and Traefik's Gateway controller REQUIRES listener ports to
+match entrypoint ports — the rehearsal pins the entrypoint to 80 so the
+Gateway's :80 listener matches) · Gateway API CRDs v1.4.0 · the web image = the
+phase-6 build at the umbrella README's pinned SHA (`de34ebaa…`, tag
+`v0.2.21-mbp.rtx.1`).
+
+Three mechanics verified against Flagger's/Strata's sources and folded into
+the fixtures:
+
+- the loadtester dispatches on `metadata.type` — the load-test webhook carries
+  NO type, so its cmd is a **background** shell task answered with `202
+  Accepted`: `hey -z 2m` keeps streaming while Flagger steps the weights, and
+  `timeout: 5s` is only how long Flagger waits for the HTTP answer
+  (`pkg/loadtester/server.go`).
+- the web pods' Host guard strips the port and matches the `allowedHosts`
+  list **exactly** (`serve/server_parts/http_api.py` `host_allowed`/`_name_in`)
+  — so `values-rehearsal.yaml` carries the mid-form names
+  (`chudmax-web-canary.chudmax`, `chudmax-web-primary.chudmax`) the webhook
+  suite's curls actually send, not just the short names.
+- the tiny Prometheus (`prometheus.install: true`; Service
+  `flagger-prometheus` in ns `flagger`, the chart's fullname helper) is what
+  `canary.metricsServer`'s default points at.
