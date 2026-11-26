@@ -57,6 +57,10 @@ hexec() {
     sleep 5
   done
   say "exec did not succeed in 12 attempts — the pod's state:"
+  kubectl -n "$NS" get pod -l app.kubernetes.io/name=hermes-agent -o wide || true
+  kubectl -n "$NS" get pod -l app.kubernetes.io/name=hermes-agent \
+    -o jsonpath='{range .items[*]}{.status.containerStatuses[*].lastState.terminated.message}{"\n"}{end}' || true
+  kubectl -n "$NS" get events --sort-by=.lastTimestamp | tail -25 || true
   kubectl -n "$NS" describe pod -l app.kubernetes.io/name=hermes-agent || true
   exit 1
 }
@@ -111,6 +115,9 @@ for img in ghcr.io/urmanac/chudmax/fetcher:0.1.0 ghcr.io/urmanac/chudmax/tickets
   # The phase-6 proven route: load the SAME archive via image-archive
   # (`kind load docker-image` re-saves through docker and ctr rejects it).
   kind load image-archive "$tar" --name "$CLUSTER"
+  # Disk hygiene: the archives are ~GB-class; the node's create-stage failure
+  # window (runc snapshot prep) tightens with every stray copy.
+  rm -f "$tar"
 done
 receipt "mcp pod images built (podman) and loaded (the phase-6 image-archive route)"
 
@@ -122,6 +129,7 @@ git -C "$RUNNER_TEMP/strata" checkout -q FETCH_HEAD
 pbuild ghcr.io/urmanac/chudmax/web:0.1.0 k8s/umbrella/chudmax/web-image/Dockerfile "$RUNNER_TEMP/strata"
 podman save --format docker-archive -o /tmp/web.tar ghcr.io/urmanac/chudmax/web:0.1.0
 docker load --input /tmp/web.tar >/dev/null
+rm -f /tmp/web.tar
 docker rm -f hermes-mock-engine >/dev/null 2>&1 || true
 docker run -d --name hermes-mock-engine --network kind -p 8080:8080 \
   -e STRATA_ALLOWED_HOSTS="chudmax-engine,chudmax-engine.chudmax.svc,chudmax-engine.chudmax.svc.cluster.local,localhost,127.0.0.1" \
