@@ -6,7 +6,9 @@ Labels follow `chudmax/AGENTS.md`: `verified-here` (run in this sandbox), `hando
 
 ## CI receipts (2026-11-26)
 
-- **Run #1 (`verified-here`, PR #7):** `chart` job **green in CI** — all steps (lint ×2, template variants + guard negative test, shape checks, LAN hygiene) — the local battery transferred. `kind` job **failed at 2m25s** in the smoke's image section: the manifest-list pull succeeded (digest `sha256:ef0650d5…` recorded) but `kind load docker-image` failed on ctr's `--all-platforms` import — the arm64 blob (`sha256:2223ae…`, the arm64 instance digest from the Docker Hub receipt) was never pulled by the docker daemon. Fixed in e713643: pull `v0.23.4-amd64` (single-platform), re-tag to the chart-default `v0.23.4`, load. (Label for the fix's effect: `speculation` until the rerun.)
+- **Run #1 (`verified-here`, PR #7):** `chart` job **green in CI** — all steps (lint ×2, template variants + guard negative test, shape checks, LAN hygiene) — the local battery transferred. `kind` job **failed at 2m25s** in the smoke's image section: the manifest-list pull succeeded (digest `sha256:ef0650d5…` recorded) but `kind load docker-image` failed on ctr's `--all-platforms` import — the arm64 blob (`sha256:2223ae…`, the arm64 instance digest from the Docker Hub receipt) was never pulled by the docker daemon.
+- **Run #2 (`verified-here`):** the per-arch-tag fix died at the pull — **`v0.23.4-amd64` is not pullable** (per-arch tags exist for rc/canary builds only; the final release publishes only list tags). Correction recorded; the requirements/design no longer claim final-release per-arch tags.
+- **Settled route (9ac4e24; `speculation` until the rerun): the node pre-pull via `crictl pull`** — containerd resolves the multi-arch list natively (the production path); the kubelet pull under `pullPolicy: IfNotPresent` is the fallback.
 
 ## Local render proofs (2026-11-26, `verified-here`, sandbox; helm 3.16.4 + kubeconform 0.6.7 installed to ~/.local/bin — `/usr/local/bin` is not writable in this sandbox, a deviation from the phase-3 recipe worth remembering)
 
