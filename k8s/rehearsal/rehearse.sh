@@ -300,8 +300,8 @@ STARTED1=$(started_at); RC1=$(restarts_now)
 receipt "commit #2 delivered: T-9002 served, no v1-only answer after the swap, server startedAt/restartCount unchanged"
 capture_facts "#2" "$SHA2" "$FACTS_REV" >/dev/null
 
-# ------------------------------------------- commit #3: retention prunes, the server answers
-note "commit #3: retention (keep=3) prunes the first revision; the server keeps answering"
+# ------------------- commit #3: the third revision; within keep=3, the server answers
+note "commit #3: the third revision (within keep=3); the server keeps answering"
 start_poller "$CHAIN_WAIT"
 sleep 6
 ( cd "$WT" && printf '\n## T-9003 - Example: retention kept the newest trees\n\n**Purpose:**\nthe default keep=3 prunes the first revision dir; the reread survives the prune.\n\n---\n' >> tickets.md \
@@ -312,12 +312,8 @@ sleep 2; kubectl -n "$NS" logs poller > "$LOGS/poll3.log" 2>/dev/null || true
 DIRS=$(revisions_dirs)
 COUNT=$(printf '%s\n' "$DIRS" | grep -c . || true)
 [ "$COUNT" -le 3 ] || fail "retention: $COUNT revision dirs (want <= 3)"
-DIGEST1_HEX=$(grep -o '[0-9a-f]\{64\}' <<<"$DIGEST1" | head -1)
-if printf '%s\n' "$DIRS" | grep -q "$DIGEST1_HEX"; then
-  fail "retention: the first revision's dir ($DIGEST1_HEX) is still present"
-fi
-tail -3 "$LOGS/poll3.log" | grep -q T-9003 || fail "after the prune the server stopped answering"
-receipt "commit #3 delivered: T-9003 served; $COUNT revision dirs (<=3), the first tree pruned; the server still answers"
+tail -3 "$LOGS/poll3.log" | grep -q T-9003 || fail "after the third revision the server stopped answering"
+receipt "commit #3 delivered: T-9003 served; $COUNT revision dirs (<= keep=3); the server still answers"
 FACTS3_REV=$(capture_facts "#3" "$SHA3" "$FACTS_REV")
 
 # --------------------- the cidr-mode exercise: fresh connections, then commit #4
@@ -355,6 +351,20 @@ SHA4=$(cd "$WT" && git rev-parse HEAD)
 wait_for_ticket T-9004 || fail "commit #4: T-9004 never appeared after the cidr upgrade"
 receipt "commit #4 delivered hands-off under the upgraded policy: T-9004 served"
 capture_facts "#4" "$SHA4" "$FACTS3_REV" >/dev/null
+
+# retention's real receipt: keep=3 prunes exactly at the FOURTH revision —
+# the first revision's dir must be gone and the server must still answer
+# (the reread survives the prune).
+DIRS4=$(revisions_dirs)
+COUNT4=$(printf '%s\n' "$DIRS4" | grep -c . || true)
+[ "$COUNT4" -le 3 ] || fail "retention: $COUNT4 revision dirs after the 4th (want <= 3)"
+DIGEST1_HEX=$(grep -o '[0-9a-f]\{64\}' <<<"$DIGEST1" | head -1)
+if printf '%s\n' "$DIRS4" | grep -q "$DIGEST1_HEX"; then
+  fail "retention: the first revision's dir ($DIGEST1_HEX) survived the 4th revision"
+fi
+kubectl -n "$NS" logs poller 2>/dev/null | tail -3 | grep -q T-9004 \
+  || fail "after the prune the server stopped answering"
+receipt "retention proven: $COUNT4 dirs (<=3) after the 4th revision; the first tree ($DIGEST1_HEX) pruned; the server still answers"
 
 # ------------------------------------------------------------- the denials
 note "the denials: a rogue pod (default SA, no release labels)"

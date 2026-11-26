@@ -23,16 +23,21 @@ is, is recorded in the task's receipts.
   appears, NO v1-only answer after the first v2 answer, and the server
   container's `startedAt`/`restartCount` are unchanged (the per-call contract,
   for real).
-- **Commit #3**: the default `--keep 3` prunes the first revision dir; the
-  server still answers; `repo_facts` shows `origin_revision` containing the
-  pushed SHA (the exact string recorded) and a content-hash `revision` that
-  changed with every commit.
+- **Commit #3**: the third revision — within `--keep 3`, so three dirs exist
+  and the server still answers (the reread contract); `repo_facts` shows
+  `origin_revision` containing the pushed SHA (the exact string recorded) and
+  a content-hash `revision` that changed with every commit. The PRUNE itself
+  is proven on the FOURTH revision (keep=3 prunes exactly then): the first
+  revision's dir is gone and the server still answers — asserted after
+  commit #4 below.
 - **The cidr-mode upgrade**: a policy-only `helm upgrade` (mode: cidr, the
   endpoint IP discovered via `kubectl get endpoints kubernetes`) — the CNP is
   gone, the pod untouched, a **FRESH** apiserver GET succeeds (an established
   stream surviving proves nothing), and **commit #4** delivers hands-off under
-  the upgraded policy. Cilium runs with `--policy-cidr-match-mode=nodes` so
-  its ipBlock rules can match node IPs at all (without the flag the rule
+  the upgraded policy — which is also where **retention prunes for real**
+  (the 4th revision with `--keep 3`): the first revision's dir is gone and
+  the server still answers. Cilium runs with `--policy-cidr-match-mode=nodes`
+  so its ipBlock rules can match node IPs at all (without the flag the rule
   silently drops).
 - **The denials**: the rogue pod (release namespace, default ServiceAccount, no
   release labels) gets **403 Forbidden** on the ExternalArtifact GET (it cannot
