@@ -293,7 +293,7 @@ else
   # the cidr rule: the VIP on 443 (the pre-DNAT match); the extra rule: the
   # control-plane endpoint on 443+6443 (the post-DNAT match)
   # (phase-7 polish: the chart's key is the cidrs LIST — the pre-phase-5
-  # singular `cidr=` key was silently ignored and the 10.96.0.0/12 default
+  # singular `cidr=` key was silently ignored and the default service CIDR
   # rendered instead of the discovered VIP)
   helm upgrade chudmax "$CHART" -n "$NS" \
     --set engine.endpoint.host="$ENGINE_HOST" \
