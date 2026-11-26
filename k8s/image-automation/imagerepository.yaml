@@ -1,0 +1,33 @@
+# Phase 8 (T-0037): the Flux image objects for the three house-built images.
+# The registry URLs are the PRODUCTION references (ghcr.io/urmanac/chudmax/*) —
+# unpublished until the phase-10 publishing milestone; the rehearsal renders
+# the in-cluster registry stand-in (rehearsal/imagerepository-rehearsal.yaml)
+# and this file is what phase 10's wiring consumes as-is.
+#
+# Namespace convention (k8s/repo-sync/): no in-manifest namespace — apply with
+# -n flux-system. hermes-agent has NO ImageRepository by design: the Hermes
+# chart (k8s/chart/hermes-agent/) consumes upstream nousresearch/hermes-agent
+# semver tags chosen manually — the automation loop is for the images we build.
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: chudmax-fetcher
+spec:
+  interval: 5m
+  image: ghcr.io/urmanac/chudmax/fetcher
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: chudmax-tickets-mcp
+spec:
+  interval: 5m
+  image: ghcr.io/urmanac/chudmax/tickets-mcp
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: chudmax-web
+spec:
+  interval: 5m
+  image: ghcr.io/urmanac/chudmax/web

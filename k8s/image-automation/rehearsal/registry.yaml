@@ -1,0 +1,55 @@
+# Phase 8 rehearsal (T-0037): the in-cluster registry stand-in for ghcr.io —
+# the steering's registry:2. The image-reflector scans it in-cluster over
+# plain HTTP (ImageRepository.spec.insecure); the RUNNER pushes through the
+# kind node's NodePort. Ephemeral storage on purpose: the cluster is
+# throwaway and the images are retags of the same build.
+#
+# The pod is NOT selected by Flux's shipped policies (label `app:
+# image-registry`), so no policy constrains its traffic in either direction.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: image-registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: image-registry
+  template:
+    metadata:
+      labels:
+        app: image-registry
+    spec:
+      containers:
+        - name: registry
+          # registry:2's pinned 2.x line (the steering's registry:2).
+          image: registry:2.8.3
+          ports:
+            - name: http
+              containerPort: 5000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+spec:
+  type: NodePort
+  selector:
+    app: image-registry
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+      nodePort: 30500

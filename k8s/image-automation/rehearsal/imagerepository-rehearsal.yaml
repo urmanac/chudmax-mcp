@@ -1,0 +1,32 @@
+# Phase 8 rehearsal (T-0037): the test variant of imagerepository.yaml.
+# Delta vs production, per repository: the ghcr.io prefix becomes the
+# in-cluster registry stand-in (the steering's registry:2) and
+# spec.insecure: true admits the plain-HTTP scan. Everything else — the
+# names, the paths, the interval — is the production shape, so the
+# phase-10 wiring is a prefix swap plus an insecure-key removal.
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: chudmax-fetcher
+spec:
+  interval: 5m
+  image: registry.flux-system.svc:5000/urmanac/chudmax/fetcher
+  insecure: true
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: chudmax-tickets-mcp
+spec:
+  interval: 5m
+  image: registry.flux-system.svc:5000/urmanac/chudmax/tickets-mcp
+  insecure: true
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: chudmax-web
+spec:
+  interval: 5m
+  image: registry.flux-system.svc:5000/urmanac/chudmax/web
+  insecure: true

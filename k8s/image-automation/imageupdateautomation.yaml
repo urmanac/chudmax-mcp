@@ -1,0 +1,42 @@
+# Phase 8 (T-0037): the automation that turns a resolved ImagePolicy into a
+# commit on a review branch. It consumes the PRODUCTION GitRepository
+# chudmax-source (k8s/repo-sync/gitrepository.yaml — not re-committed here)
+# and pushes with that object's secretRef credentials: the write-scoped
+# credential the phase-12 milestone must provision (the repo-sync README's
+# read-only deploy key cannot push — see this directory's README).
+#
+# Mechanics (Flux docs, image.toolkit.fluxcd.io/v1):
+#   - checkout defaults to the GitRepository's ref (main);
+#   - the Setters strategy rewrites the lines carrying
+#     `# {"$imagepolicy": "flux-system:<policy>"}` markers;
+#   - the commit lands on git.push.branch, which the controller (re)creates
+#     from the checkout branch and OVERWRITES each run (the default
+#     GitForcePushBranch gate) — the review tip always reflects the latest
+#     resolution; main itself is never written.
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageUpdateAutomation
+metadata:
+  name: chudmax-image-updates
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: chudmax-source
+  git:
+    commit:
+      author:
+        name: chudmax-flux-bot
+        email: flux-bot@chudmax.invalid
+      messageTemplate: |
+        Automated image update
+
+        {{ .Changed.Summary }}
+    push:
+      branch: review/image-updates
+  update:
+    strategy: Setters
+    # The release-values tree of the repo the automation pushes to — the
+    # private source-of-truth repo's plan tree. PINNED AT THE PHASE-12
+    # WIRING (speculation until then): the rehearsal proves the mechanics
+    # over its own values/ tree (rehearsal/imageupdateautomation-rehearsal.yaml).
+    path: ./kubernetes
