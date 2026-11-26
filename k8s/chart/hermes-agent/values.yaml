@@ -24,11 +24,13 @@ image:
 # cluster role here — nothing in the chart reads or writes the API.
 automountServiceAccountToken: false
 
-# The container command: the docker-compose deployment shape. The gateway is
-# supervised by s6 inside the image (auto-restart, per-profile logs on the
-# volume). The API server + /health surface rides this process (apiServer
-# below) — there is no second container.
-command: ["gateway", "run"]
+# The container args: the docker-compose deployment shape. Rendered as the
+# container's `args` (NOT `command`) — k8s `command` would REPLACE the image's
+# entrypoint dispatcher and exec a bare `gateway` (the CI receipt, run #8:
+# `exec: "gateway": executable file not found in $PATH`); `args` keeps the
+# dispatcher and routes to `hermes gateway run`, supervised by s6 inside the
+# image. The API server + /health surface rides this process (apiServer below).
+args: ["gateway", "run"]
 
 # THE exposed interface: the OpenAI-compatible API server on :8642 — the one
 # programmatic HTTP surface designed for external clients. The bearer key is

@@ -51,7 +51,7 @@ logins); `hermes import <zip>` restores it.
 | Value | Default | Notes |
 |---|---|---|
 | `image.repository` / `tag` / `digest` | `nousresearch/hermes-agent` / `v0.23.4` / `""` | digest wins when set |
-| `command` | `["gateway", "run"]` | the compose deployment shape (s6-supervised) |
+| `args` | `["gateway", "run"]` | the compose deployment shape (s6-supervised); rendered as container `args` so the image's entrypoint dispatcher stays — k8s `command` would replace it |
 | `apiServer.enabled` | `true` | the one Service + the probes render only with it |
 | `apiServer.port` | `8642` | Service + containerPort + probes |
 | `apiServer.key` | `""` | literal key → chart-created Secret (rehearsals only) |

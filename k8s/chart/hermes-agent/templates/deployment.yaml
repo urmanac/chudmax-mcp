@@ -38,10 +38,12 @@ spec:
         - name: hermes
           image: {{ include "hermes-agent.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # The compose deployment shape: the s6-supervised gateway. No args
-          # override = the interactive TUI — never what a Service-backed pod runs.
-          command:
-            {{- toYaml .Values.command | nindent 12 }}
+          # The compose deployment shape: the s6-supervised gateway. Rendered as
+          # ARGS (entrypoint preserved) — k8s `command` would replace the image's
+          # entrypoint dispatcher (run #8's receipt). No args override = the
+          # interactive TUI — never what a Service-backed pod runs.
+          args:
+            {{- toYaml .Values.args | nindent 12 }}
           env:
             {{- if .Values.apiServer.enabled }}
             - name: API_SERVER_ENABLED
