@@ -65,7 +65,10 @@ jobs:
         run: |
           sed 's|\${METRICS_SERVER}|http://flagger-prometheus.flagger:9090|g' k8s/canary/metric-templates.yaml > /tmp/metric-templates-rendered.yaml
           sed 's|\${TRAEFIK_URL}|http://traefik.chudmax|g' k8s/canary/canary.yaml > /tmp/canary-rendered.yaml
-          /tmp/kubeconform -strict -summary k8s/canary/gateway.yaml /tmp/canary-rendered.yaml /tmp/metric-templates-rendered.yaml k8s/canary/mcp-config-broken.yaml
+          /tmp/kubeconform -strict -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            k8s/canary/gateway.yaml /tmp/canary-rendered.yaml /tmp/metric-templates-rendered.yaml k8s/canary/mcp-config-broken.yaml
       - name: LAN-address hygiene (no RFC1918-shaped address in any phase-7 public artifact)
         run: |
           ! grep -RInE '\b(10|172|192)\.[0-9]+\.[0-9]+\.[0-9]+\b' \
@@ -74,9 +77,6 @@ jobs:
   kind:
     runs-on: ubuntu-latest
     timeout-minutes: 75
-    env:
-      REHEARSAL_LOGS: ${{ runner.temp }}/canary-logs
-      REHEARSAL_SUMMARY: ${{ runner.temp }}/canary-summary.txt
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
@@ -109,6 +109,9 @@ jobs:
           sudo mv /tmp/cilium /usr/local/bin/cilium
           cilium version --client
       - name: the rehearsal (LIVE — every line streams to this job log; each receipt appends to the run summary as it happens)
+        env:
+          REHEARSAL_LOGS: ${{ runner.temp }}/canary-logs
+          REHEARSAL_SUMMARY: ${{ runner.temp }}/canary-summary.txt
         run: |
           bash -n k8s/canary/canary-rehearse.sh
           bash k8s/canary/canary-rehearse.sh
