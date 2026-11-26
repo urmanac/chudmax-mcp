@@ -13,6 +13,10 @@ spec:
     metadata:
       labels:
         {{- include "chudmax-web.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
       securityContext:
@@ -37,6 +41,14 @@ spec:
             - {{ .Values.port | quote }}
             {{- range .Values.extraArgs }}
             - {{ . | quote }}
+            {{- end }}
+            {{- if .Values.mcpConfig }}
+            # The hub config (the inline ConfigMap above): the LAST args pair,
+            # index 6/7 of the rendered list — the phase-7 broken-upgrade patch
+            # swaps index 7 to the broken-config path (the index is derived
+            # from the rendered template at runtime, never hard-coded).
+            - --mcp-config
+            - /etc/strata/mcp-config.json
             {{- end }}
           env:
             # The DNS-rebinding guard: without an API key every request passes
@@ -69,3 +81,18 @@ spec:
                 - ALL
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.mcpConfig }}
+          volumeMounts:
+            # The hub config file (subPath: the ConfigMap's one key as a file,
+            # read-only). The comment above the args explains the index.
+            - name: mcp-config
+              mountPath: /etc/strata/mcp-config.json
+              subPath: config.json
+              readOnly: true
+          {{- end }}
+      {{- if .Values.mcpConfig }}
+      volumes:
+        - name: mcp-config
+          configMap:
+            name: {{ include "chudmax-web.fullname" . }}-mcp-config
+      {{- end }}
