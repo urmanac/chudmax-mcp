@@ -1,0 +1,10 @@
+# The monitoring namespace — home of the Prometheus stack (full-stack profile).
+# The configs profile objects (PodMonitors, ServiceMonitors, PrometheusRules)
+# land here too, whatever profile installs them.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring

@@ -1,0 +1,19 @@
+# The pinned chart source: kube-prometheus-stack's OCI artifact, semver-major
+# pinned like upstream's monitoring/controllers/kube-prometheus-stack/repository.yaml.
+# Pinning the major (69.x) keeps Flux from surprise-breaking on a chart bump;
+# the bump itself is a deliberate manifest change, reviewed like any other.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: kube-prometheus-stack
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  interval: 1h
+  url: oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
+  ref:
+    semver: "69.x"
+  layerSelector:
+    mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+    operation: copy

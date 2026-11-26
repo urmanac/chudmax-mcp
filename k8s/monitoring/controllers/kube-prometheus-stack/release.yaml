@@ -1,0 +1,61 @@
+# The kube-prometheus-stack release (upstream's release.yaml, chudmax-adapted).
+# Alertmanager is off by design (no paging contract yet); Grafana is
+# values-gated — upstream ships `grafana.adminPassword: flux` inline, an
+# inline credential this repo forbids, so Grafana is DISABLED here and the
+# README documents the enabled path (values patch + grafana.admin.existingSecret,
+# a Secret referenced by name only, created out-of-band).
+#
+# The two *MonitorNamespaceSelectors are empty ({}) so PodMonitors and
+# ServiceMonitors are discovered in every namespace; the *MonitorSelectors
+# pick only objects labeled app.kubernetes.io/component: monitoring — the
+# label every chudmax configs/ object carries.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  interval: 1h
+  chartRef:
+    kind: OCIRepository
+    name: kube-prometheus-stack
+  install:
+    crds: Create
+  upgrade:
+    crds: CreateReplace
+  driftDetection:
+    mode: enabled
+    ignore:
+      # The operator re-annotates PrometheusRules it validated; upstream's
+      # ignore keeps drift detection from flapping on that annotation.
+      - paths: [ "/metadata/annotations/prometheus-operator-validated" ]
+        target:
+          kind: PrometheusRule
+  valuesFrom:
+    - kind: ConfigMap
+      name: flux-kube-state-metrics-config
+      valuesKey: kube-state-metrics-config.yaml
+  # https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/values.yaml
+  values:
+    alertmanager:
+      enabled: false
+    prometheus:
+      prometheusSpec:
+        retention: 24h
+        resources:
+          requests:
+            cpu: 200m
+            memory: 200Mi
+        podMonitorNamespaceSelector: { }
+        podMonitorSelector:
+          matchLabels:
+            app.kubernetes.io/component: monitoring
+        serviceMonitorNamespaceSelector: { }
+        serviceMonitorSelector:
+          matchLabels:
+            app.kubernetes.io/component: monitoring
+    grafana:
+      enabled: false
+      defaultDashboardsEnabled: false

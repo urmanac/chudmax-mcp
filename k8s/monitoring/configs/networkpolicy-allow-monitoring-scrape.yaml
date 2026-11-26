@@ -1,0 +1,108 @@
+# Admit the monitoring stack's scrapes to the chudmax workloads.
+#
+# THE COMPOSITION RULE (kindnet has enforced NetworkPolicy since kind v0.24 —
+# owner-verified): the moment ANY NetworkPolicy selects a pod, that pod's
+# ingress is default-deny for everything the union of all selecting policies
+# does not admit. These policies are written additive-only relative to the
+# no-policy baseline: each adds the monitoring admission AND keeps every
+# previously-open legitimate path open, so applying this file never
+# unintentionally blocks Gateway traffic to chudmax-web (reviewer-checked):
+#
+#   chudmax-web (:8080) admits
+#     - the monitoring namespace (the scrapes),
+#     - Traefik pods (the Gateway data plane — same pod label the
+#       PodMonitor pins; phase 7's install must match),
+#     - Flagger pods (canary analysis reaches the app directly),
+#     - same-namespace pods (helm test hooks, in-ns callers).
+#   The Gateway->chudmax-web ingress allowance is INCLUDED here on purpose —
+#   without it, this overlay would flip chudmax-web to default-deny and sever
+#   the Gateway route until phase 7/12 ship their own admission.
+#
+#   Traefik (:9100) admits the monitoring namespace for the metrics scrape,
+#   and keeps TCP 80/443 open to ALL sources — the data-plane ports were open
+#   before any policy selected these pods, and tightening them (real ingress
+#   admission) is phase 12's placement inventory, not this overlay's move.
+#
+# Namespaces below are per-install placeholders, edited like the repo-sync
+# manifests' artifact-ingress.yaml:
+#   - chudmax-releases: the umbrella release namespace placeholder
+#   - flux-system:      the assumed Traefik home (phase 7's decision —
+#                       Open Question 1 in the design)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring-scrape-web
+  namespace: chudmax-releases
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: chudmax-web
+  policyTypes:
+    - Ingress
+  ingress:
+    # the Prometheus stack's scrapes (from the monitoring namespace)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8080
+    # the Gateway data plane: Traefik pods reaching the web backends
+    - from:
+        - namespaceSelector: { }
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Flagger's analysis traffic (canary readiness / direct service checks)
+    - from:
+        - namespaceSelector: { }
+          podSelector:
+            matchLabels:
+              app: flagger
+      ports:
+        - protocol: TCP
+          port: 8080
+    # same-namespace callers (helm test hooks, in-ns clients)
+    - from:
+        - podSelector: { }
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring-scrape-traefik
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  policyTypes:
+    - Ingress
+  ingress:
+    # the metrics scrape from the monitoring namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9100
+    # the data plane stays as open as it was before any policy selected these
+    # pods (tightening is phase 12's placement inventory, not this overlay's)
+    - ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443

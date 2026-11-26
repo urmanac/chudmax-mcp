@@ -1,0 +1,30 @@
+# The configs profile: every chudmax scrape target, alert, Flagger template,
+# scrape-admission policy and dashboard — installable ALONE (platforms that
+# already run a Prometheus/VictoriaMetrics operator) or through the
+# controllers profile (kustomization-flux.yaml's monitoring-configs).
+#
+# Namespace handling: NO kustomization-level `namespace:` — kustomize's
+# namespace transformer OVERRIDES explicit per-file namespaces (verified with
+# a build: a ConfigMap pinned to flux-system came out `monitoring`), and this
+# profile deliberately spans namespaces. Every object pins its explicit
+# metadata.namespace instead:
+#   - monitoring:         the operator objects (Pod/ServiceMonitors, the
+#                         PrometheusRule, the dashboard ConfigMap) — the
+#                         operator discovers them by label from anywhere, but
+#                         pinning keeps placement deterministic under Flux
+#                         (the pair sets no targetNamespace) and kubectl -k
+#   - flux-system:        the MetricTemplates (flagger's home — per-install
+#                         edit) and the Traefik NetworkPolicy (per-install edit)
+#   - chudmax-releases:   the web NetworkPolicy (per-install edit)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - podmonitor-flux.yaml
+  - podmonitor-flagger.yaml
+  - podmonitor-gateway.yaml
+  - servicemonitor-chudmax-web.yaml
+  - servicemonitor-chudmax-engine.yaml
+  - metrictemplates.yaml
+  - prometheusrules.yaml
+  - networkpolicy-allow-monitoring-scrape.yaml
+  - dashboards-configmap.yaml

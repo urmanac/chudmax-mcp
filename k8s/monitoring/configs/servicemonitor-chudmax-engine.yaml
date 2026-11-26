@@ -1,0 +1,43 @@
+# The engine's metrics. The engine is a pure pointer: a SELECTORLESS Service
+# (chudmax-engine, named port `http`) whose only targets come from the
+# installer-supplied EndpointSlice. A ServiceMonitor selects Services by
+# LABEL, so it works over a selectorless Service: the targets are the
+# endpoints the EndpointSlice carries (the external engine host — the mock
+# engine on the docker bridge in rehearsal, the LAN host in production).
+#
+# The engine runs the same Strata server, so the same /metrics?format=prometheus
+# contract applies; its Host guard admits IP-literal hosts (verified), and an
+# EndpointSlice address IS an IP — no relabeling needed.
+#
+# API-key-protected host engines: a Strata with an API key set skips the Host
+# guard and requires Bearer auth instead — uncomment and point at the Secret
+# (created out-of-band, referenced by name only, never a credential here):
+#
+#   endpoints:
+#     - port: http
+#       ...
+#       authorization:
+#         type: Bearer
+#         credentials:
+#           name: chudmax-engine-metrics-auth
+#           key: token
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: chudmax-engine
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  namespaceSelector: { }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chudmax-engine
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      params:
+        format:
+          - prometheus

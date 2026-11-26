@@ -1,0 +1,196 @@
+# The phase-000910 CI re-proof for k8s/monitoring (the design docs' "CI is the
+# authoritative receipt"): both profiles build, the Flux manifests validate
+# against the Flux schemas, every object validates strict against the k8s +
+# Prometheus Operator + Flagger CRD schemas, the alert rules and the Flagger
+# MetricTemplate queries parse as PromQL, the live Strata mock engine serves
+# the exact scrape contract the ServiceMonitors pin, and the public-hygiene
+# rules hold. No cluster — reconciliation is the Flux pair's job at install.
+#
+# Tool pins carry the sandbox build receipts from the implementing session
+# (2026-11-26): kustomize v5.4.3, kubeconform v0.6.7 (16/16 valid, 0 skipped,
+# every CRD schema resolved from the CRDs-catalog), promtool v2.53.4 (4 alerts
+# + 3 template queries SUCCESS), flux-schema 0.18.0 (4 Flux resources valid),
+# Strata v0.2.21-mbp.rtx.1 (de34eba — the phase-6 pin; scrape smoke green).
+
+name: monitoring-validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  kustomize-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kustomize v5.4.3
+        run: |
+          curl -sL -o kustomize.tgz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
+          tar xzf kustomize.tgz
+      - name: Build the controllers profile
+        run: ./kustomize build k8s/monitoring/controllers > controllers.yaml
+      - name: Build the configs profile
+        run: ./kustomize build k8s/monitoring/configs > configs.yaml
+      - name: The dashboard JSON inside its ConfigMap parses
+        run: |
+          python3 - <<'EOF'
+          import yaml, json
+          found = 0
+          for d in yaml.safe_load_all(open("configs.yaml")):
+              if isinstance(d, dict) and d.get("kind") == "ConfigMap" \
+                      and d["metadata"]["name"].startswith("chudmax-grafana-dashboards"):
+                  js = json.loads(d["data"]["chudmax-overview.json"])
+                  print("dashboard parses:", js["title"], "| panels:", len(js["panels"]))
+                  found += 1
+          assert found == 1, "the dashboard ConfigMap is missing"
+          EOF
+
+  flux-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Flux CLI with the schema plugin
+        uses: fluxcd/flux2/action@v2.10.1
+        with:
+          plugins: |
+            schema
+      - name: Validate the monitoring manifests against the Flux schemas
+        run: |
+          flux schema validate k8s/monitoring/kustomization-flux.yaml --schema-location default
+          flux schema validate k8s/monitoring/controllers/kube-prometheus-stack/repository.yaml --schema-location default
+          flux schema validate k8s/monitoring/controllers/kube-prometheus-stack/release.yaml --schema-location default
+
+  kubeconform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kustomize v5.4.3 and kubeconform v0.6.7
+        run: |
+          curl -sL -o kustomize.tgz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
+          tar xzf kustomize.tgz
+          curl -sL -o kubeconform.tgz \
+            "https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz"
+          tar xzf kubeconform.tgz kubeconform
+      - name: Validate both builds strict (k8s + Prometheus Operator + Flagger CRD schemas)
+        run: |
+          ./kustomize build k8s/monitoring/controllers > controllers.yaml
+          ./kustomize build k8s/monitoring/configs > configs.yaml
+          # -strict: unknown fields fail. CRD schemas come from the datreeio
+          # catalog (monitoring.coreos.com, flagger.app, source/kustomize
+          # .toolkit.fluxcd.io are all covered). If a schema ever goes missing
+          # there, the recorded fallback is fetching the operators' CRDs and
+          # converting — do not add -ignore-missing-schemas to pass.
+          ./kubeconform -strict -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            controllers.yaml configs.yaml
+
+  promtool:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kustomize v5.4.3 and promtool (prometheus v2.53.4 LTS)
+        run: |
+          curl -sL -o kustomize.tgz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
+          tar xzf kustomize.tgz
+          curl -sL -o prometheus.tgz \
+            "https://github.com/prometheus/prometheus/releases/download/v2.53.4/prometheus-2.53.4.linux-amd64.tar.gz"
+          tar xzf prometheus.tgz prometheus-2.53.4.linux-amd64/promtool
+      - name: promtool check rules (alerts + the MetricTemplate queries)
+        run: |
+          ./kustomize build k8s/monitoring/configs > configs.yaml
+          python3 - <<'EOF'
+          import re
+          docs = open("configs.yaml").read().split("\n---\n")
+          # promtool check rules wants bare rule-group docs, not the
+          # PrometheusRule CR wrapper: keep the spec block of each
+          def groups(docs):
+              return "\n---\n".join(
+                  re.search(r"^spec:\n((?:  .*\n?)+)", d, re.M).group(1).rstrip("\n")
+                  for d in docs if "kind: PrometheusRule" in d)
+          open("alerts-groups.yaml", "w").write(groups(docs))
+          # the Flagger queries ride Go templates that sit inside quoted
+          # matchers, so they parse as plain PromQL: prove it by wrapping each
+          # one in a scratch recording rule and running the same check
+          entries = []
+          for mt in (d for d in docs if "kind: MetricTemplate" in d):
+              name = re.search(r"^  name: (\S+)$", mt, re.M).group(1)
+              q = re.search(r"^  query: \|\n((?:    .*\n?)+)", mt, re.M).group(1).rstrip("\n")
+              q = "\n".join(ln[4:] for ln in q.split("\n"))
+              rec = "chudmax_metric_template_" + name.replace("-", "_")
+              entries.append("          - record: %s\n            expr: |\n%s"
+                             % (rec, "\n".join("              " + ln for ln in q.split("\n"))))
+          open("templates-groups.yaml", "w").write(
+              "  groups:\n    - name: chudmax.metrictemplates\n      rules:\n" + "\n".join(entries))
+          EOF
+          ./prometheus-2.53.4.linux-amd64/promtool check rules alerts-groups.yaml templates-groups.yaml
+
+  strata-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install promtool (prometheus v2.53.4 LTS)
+        run: |
+          curl -sL -o prometheus.tgz \
+            "https://github.com/prometheus/prometheus/releases/download/v2.53.4/prometheus-2.53.4.linux-amd64.tar.gz"
+          tar xzf prometheus.tgz prometheus-2.53.4.linux-amd64/promtool
+      - name: Clone Strata at the phase-6 pin
+        run: git clone -q --depth 1 --branch v0.2.21-mbp.rtx.1 https://github.com/kingdonb/Strata /tmp/Strata
+      - name: Install the runtime packages
+        run: pip install -r /tmp/Strata/terminal/requirements.txt
+      - name: Start the mock engine on loopback
+        run: |
+          cd /tmp/Strata/terminal
+          PYTHONPATH=".:.." nohup python -m serve.server --engine mock --host 127.0.0.1 --port 8095 > /tmp/strata.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8095/health && break; sleep 2; done
+          curl -sf http://127.0.0.1:8095/health > /dev/null || { tail -20 /tmp/strata.log; exit 1; }
+      - name: One chat completion
+        run: |
+          # max_tokens gives the scripted mock reply room to finish its
+          # thinking preamble: 16 truncated it inside <think> (empty content,
+          # finish_reason length), which is a correct reply for a cut request
+          # but not what this receipt checks
+          curl -sf http://127.0.0.1:8095/v1/chat/completions -H 'Content-Type: application/json' \
+            -d '{"messages":[{"role":"user","content":"hi"}],"max_tokens":256}' | tee /tmp/completion.json | head -c 300
+          python3 -c "import json; r=json.load(open('/tmp/completion.json')); assert r['choices'][0]['message']['content'], 'empty reply'"
+      - name: The scrape contract the ServiceMonitors pin
+        run: |
+          curl -s 'http://127.0.0.1:8095/metrics?format=prometheus' > /tmp/metrics.txt
+          test "$(grep -c '^vllm:' /tmp/metrics.txt)" -gt 10 || { echo "no vllm: families"; cat /tmp/metrics.txt; exit 1; }
+          # strata:gpu_* ride hardware readings — absent on a CPU-only runner
+          # (prometheus.py emits the gpu families only when a GPU is found);
+          # the cpu/ram and live_state families always are, so those are the
+          # strata: half of the contract the smoke asserts here
+          grep -q '^vllm:request_success_total' /tmp/metrics.txt || { echo "missing expected metric"; cat /tmp/metrics.txt; exit 1; }
+          grep -q '^vllm:time_to_first_token_seconds_bucket' /tmp/metrics.txt || { echo "missing expected metric"; cat /tmp/metrics.txt; exit 1; }
+          grep -q '^strata:ram_total_bytes' /tmp/metrics.txt || { echo "missing expected metric"; cat /tmp/metrics.txt; exit 1; }
+          grep -q '^strata:live_state' /tmp/metrics.txt || { echo "missing expected metric"; cat /tmp/metrics.txt; exit 1; }
+          # promtool's metric-name lint flags the ':' names — that IS vLLM's
+          # own naming convention (vllm:num_requests_running et al.), mirrored
+          # by Strata for client compatibility. The job fails on anything
+          # beyond that expected lint (i.e. on parse errors).
+          set +e
+          lint=$(./prometheus-2.53.4.linux-amd64/promtool check metrics < /tmp/metrics.txt 2>&1)
+          set -e
+          unexpected=$(printf '%s\n' "$lint" | grep -v "should not contain" | grep -v "abbreviated units" || true)
+          if [ -n "$unexpected" ]; then printf '%s\n' "$lint"; exit 1; fi
+          echo "promtool: the exposition parses; only the expected ':'-name lint"
+
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Public-hygiene grep over k8s/monitoring
+        run: |
+          # no RFC1918/LAN addresses (RFC 5737 203.0.113.x is the example space)
+          ! grep -rnE '\b10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b|\b172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}\b|\b192\.168\.[0-9]{1,3}\.[0-9]{1,3}\b' k8s/monitoring/
+          # no credential VALUES (Secret name references — credentials:/secretName:/existingSecret — are fine)
+          ! grep -rnEi '(password|passwd|token|api[_-]?key)\s*[:=]\s*["'"'"']?[A-Za-z0-9+/_-]{8,}' k8s/monitoring/
+          # nothing from the private side of the mirror
+          ! grep -rn '/home/retro\|helix-api\.internal' k8s/monitoring/
