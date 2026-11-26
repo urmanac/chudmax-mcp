@@ -95,7 +95,12 @@ The egress NetworkPolicy is default-on; the rules it renders:
 - the **artifact server** — source-watcher's storage (default port 9090),
   scoped to that controller's PODS via `sourceController.selector` — the
   labels the Flux install bundle actually puts on the pods (`app:
-  source-watcher`; there is no `app.kubernetes.io/name` label on them),
+  source-watcher`; there is no `app.kubernetes.io/name` label on them). The
+  ExternalArtifact URL is `http://source-watcher.<ns>.svc.cluster.local./…`
+  — no port — so the fetch dials the Service on 80; NetworkPolicies evaluate
+  the BACKEND port (the v2.3.1 Service maps 80→9090), the same post-DNAT
+  shape as the apiserver rule's 443/6443, and the ingress side needs the
+  :9090 allowance **in flux-system** (see `k8s/repo-sync/artifact-ingress.yaml`),
 
 plus `networkPolicy.egress.extra` passthrough. The podSelectors hit ALL
 containers in the pod: a server with other egress needs adjusts the

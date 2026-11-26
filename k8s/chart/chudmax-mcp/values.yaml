@@ -122,6 +122,10 @@ networkPolicy:
     # (default :9090), not source-controller — the rule is scoped to that
     # controller's PODS now, not the whole namespace (F4, T-0037 phase 4b).
     # Match your platform's Flux install (the phase-12 inventory walks it).
+    # Port shape (source-watcher v2.3.1, receipted): the ExternalArtifact URL
+    # is http://source-watcher.<ns>.svc.cluster.local./... — no port — so the
+    # fetch dials the Service on 80 (Service 80/443 → pod 9090); policies
+    # evaluate the BACKEND port (9090), same as the apiserver rule's 443/6443.
     sourceController:
       namespace: flux-system
       port: 9090

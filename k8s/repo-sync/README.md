@@ -60,6 +60,15 @@ whenever the cluster runs Flux's shipped NetworkPolicies** (`flux install
 namespace before applying. Without it the fetcher waits forever with the
 policies on; with `--network-policy=false` it is not needed.
 
+Unlike the other manifests in this directory, **this policy lives in
+`flux-system`** (it is pinned there under `metadata.namespace`): a
+NetworkPolicy only selects pods in its OWN namespace, so applying it to the
+release namespace selects nothing and source-watcher stays behind Flux's
+default-deny (the phase-5 rehearsal burned a run proving exactly that). The
+installer therefore needs **write access in flux-system** — or the platform
+team carries the equivalent rule in their Flux install (a phase-12
+prerequisite; the inventory walks it).
+
 ## The two phase-4 answers
 
 **1. The copy rules fit the narrowed-artifact idea — they are the primary

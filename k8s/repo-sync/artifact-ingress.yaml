@@ -13,6 +13,10 @@
 # matches the chart's pods by name label; tighten with the instance label if
 # several releases share the namespace.
 #
+# PHASE-12 PREREQUISITE: this rule lives in flux-system, so the installer
+# needs write access there — or the platform team carries the equivalent rule
+# in their Flux install (the phase-12 inventory walks it).
+#
 # Out of scope here: the artifact itself is unauthenticated in-cluster HTTP
 # once this port is reachable (mTLS is phase 17); the Receiver's webhook path
 # is a phase-12 decision and needs its own allowance.
@@ -20,6 +24,13 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: chudmax-artifact-ingress
+  # NOTE: unlike the other repo-sync manifests, this policy MUST live in
+  # flux-system (next to the source-watcher pods it selects) — a NetworkPolicy
+  # only selects pods in its own namespace, so applying it to the release
+  # namespace selects NOTHING and source-watcher stays behind Flux's shipped
+  # default-deny (the phase-5 rehearsal burned a run on exactly this). The
+  # namespace is pinned here so an install cannot repeat that mistake.
+  namespace: flux-system
 spec:
   podSelector:
     matchLabels:

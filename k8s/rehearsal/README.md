@@ -37,11 +37,14 @@ is, is recorded in the task's receipts.
 - **The denials**: the rogue pod (release namespace, default ServiceAccount, no
   release labels) gets **403 Forbidden** on the ExternalArtifact GET (it cannot
   even learn the artifact URL — the phase-4 Role answer, proven) and its
-  tarball GET to source-watcher:9090 is **denied**. Positive controls: the
-  fetcher's fetch works, a **labeled, Role-less** pod CAN fetch the tarball
-  (the ingress allowance's shape is what opens the path), and the port-scope
-  probe from inside the release pod shows :9090 allowed / :8080 denied — the
-  chart's egress policy bites under Cilium, not merely exists.
+  tarball GET to the artifact URL (the source-watcher Service on port 80 —
+  v2.3.1's Service maps 80→9090; the URL carries no port) is **denied**.
+  Positive controls: the fetcher's fetch works, a **labeled, Role-less** pod
+  CAN fetch the tarball (the ingress allowance's shape is what opens the
+  path), and the port-scope probe dials the source-watcher POD directly
+  (Service ports 80/443 would refuse even policy-free): :9090 (storage)
+  allowed / :8080 (metrics — a real listener) denied — the chart's egress
+  policy bites under Cilium, not merely exists.
 - **Alerts** are applied with a dummy in-cluster sink; the sink's event count
   is recorded (the live eventSources check — if `kind: ArtifactGenerator`
   events never arrive, `alerts.yaml` gains `ExternalArtifact`; the Receiver

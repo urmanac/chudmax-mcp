@@ -226,7 +226,12 @@ capture_facts() { # $1 = label, $2 = the pushed SHA, $3 = the previous revision 
 apply_test_manifests() {
   sed "s|__RUNNER_HTTP__|${GW}:${GIT_PORT}|" "$HERE/gitrepository-test.yaml" | kubectl -n "$NS" apply -f -
   kubectl -n "$NS" apply -f "$HERE/../repo-sync/artifactgenerator.yaml"
-  sed 's|chudmax-releases|'"$NS"'|' "$HERE/../repo-sync/artifact-ingress.yaml" | kubectl -n "$NS" apply -f -
+  # The policy MUST land in flux-system: a NetworkPolicy only selects pods in
+  # its OWN namespace, so applying it to the release namespace selects nothing
+  # and source-watcher stays behind Flux's shipped default-deny (the fetch
+  # then times out — the phase-5 rehearsal's run-#5 receipt). Only the
+  # from-selector (the release namespace) is rewritten by the sed.
+  sed 's|chudmax-releases|'"$NS"'|' "$HERE/../repo-sync/artifact-ingress.yaml" | kubectl -n flux-system apply -f -
   kubectl -n "$NS" apply -f "$HERE/../repo-sync/receiver.yaml"
   kubectl -n "$NS" apply -f "$HERE/../repo-sync/alerts.yaml"
   receipt "test manifests applied (gitrepository-test rendered; the :9090 ingress allowance sed'd to $NS; receiver inert; alerts to the sink)"
@@ -377,21 +382,29 @@ grep -q 'exit=0' <<<"$CTRL" \
   || fail "control: the labeled Role-less pod could NOT fetch (the allowance shape is what admits) — $CTRL"
 receipt "positive control: the labeled Role-less pod fetched the tarball ($CTRL) — the ingress allowance is what opens the path"
 kubectl -n "$NS" delete pod control --force --grace-period=0 >/dev/null 2>&1 || true
+# The port-scope probe dials the source-watcher POD directly: the Service
+# exposes ports 80/443 only (source-watcher v2.3.1's manifest, both →
+# targetPort 9090), so a Service :9090 dial would refuse even with no policy.
+# Allowed: the storage port 9090 (the egress rule lists it; the ingress
+# allowance admits the release pods). Denied: the metrics port 8080 — a REAL
+# listener the egress rule does not list, so CONNECT-FAIL is the policy biting.
+SWIP=$(kubectl -n flux-system get endpoints source-watcher -o jsonpath='{.subsets[0].addresses[0].ip}')
+[ -n "$SWIP" ] || fail "no source-watcher endpoint IP for the port-scope probe"
 PORT_OK=$(kubectl -n "$NS" exec "$POD" -c server -- python3 -c "import urllib.request as u
 try:
-  r = u.urlopen('http://source-watcher.flux-system.svc:9090/', timeout=6); print('HTTP', r.status)
+  r = u.urlopen('http://${SWIP}:9090/', timeout=6); print('HTTP', r.status)
 except Exception as e:
   print('CONNECT-FAIL') if 'HTTPError' not in type(e).__name__ else print('HTTP', getattr(e, 'code', ''))" 2>/dev/null || true)
 grep -q 'HTTP' <<<"$PORT_OK" \
-  || fail "port-scope probe: :9090 denied from the release pod (the egress rule is broken) — $PORT_OK"
+  || fail "port-scope probe: the storage port :9090 denied from the release pod (the egress rule is broken) — $PORT_OK"
 PORT_BAD=$(kubectl -n "$NS" exec "$POD" -c server -- python3 -c "import urllib.request as u
 try:
-  r = u.urlopen('http://source-watcher.flux-system.svc:8080/', timeout=6); print('HTTP', r.status)
+  r = u.urlopen('http://${SWIP}:8080/', timeout=6); print('HTTP', r.status)
 except Exception as e:
   print('CONNECT-FAIL') if 'HTTPError' not in type(e).__name__ else print('HTTP', getattr(e, 'code', ''))" 2>/dev/null || true)
 grep -q 'CONNECT-FAIL' <<<"$PORT_BAD" \
-  || fail "port-scope probe: an unlisted port (:8080) was REACHED from the release pod — the egress rule does not bite — $PORT_BAD"
-receipt "port-scope probe: :9090 allowed ($PORT_OK), :8080 denied ($PORT_BAD) — the chart's egress policy is enforced by Cilium"
+  || fail "port-scope probe: the unlisted metrics port :8080 was REACHED from the release pod — the egress rule does not bite — $PORT_BAD"
+receipt "port-scope probe: pod $SWIP — :9090 allowed ($PORT_OK), :8080 denied ($PORT_BAD) — the chart's egress policy is enforced by Cilium"
 
 # ----------------------------------------------------- alerts + the eventSources check
 SINK_EVENTS=$(kubectl -n "$NS" logs alert-sink 2>/dev/null | grep -c SINK-EVENT || true)
