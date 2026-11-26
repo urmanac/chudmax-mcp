@@ -102,13 +102,13 @@ say "cloning Strata at the phase-6 pin and building the mock engine image..."
 git init -q "$RUNNER_TEMP/strata" 2>/dev/null || true
 git -C "$RUNNER_TEMP/strata" fetch -q --depth 1 https://github.com/kingdonb/Strata "$STRATA_PIN"
 git -C "$RUNNER_TEMP/strata" checkout -q FETCH_HEAD
-pbuild web-ci:0.1.0 k8s/umbrella/chudmax/web-image/Dockerfile "$RUNNER_TEMP/strata"
-podman save --format docker-archive -o /tmp/web.tar web-ci:0.1.0
+pbuild ghcr.io/urmanac/chudmax/web:0.1.0 k8s/umbrella/chudmax/web-image/Dockerfile "$RUNNER_TEMP/strata"
+podman save --format docker-archive -o /tmp/web.tar ghcr.io/urmanac/chudmax/web:0.1.0
 docker load --input /tmp/web.tar >/dev/null
 docker rm -f hermes-mock-engine >/dev/null 2>&1 || true
 docker run -d --name hermes-mock-engine --network kind -p 8080:8080 \
   -e STRATA_ALLOWED_HOSTS="chudmax-engine,chudmax-engine.chudmax.svc,chudmax-engine.chudmax.svc.cluster.local,localhost,127.0.0.1" \
-  web-ci:0.1.0 --engine mock --host 0.0.0.0 --port 8080 >/dev/null
+  ghcr.io/urmanac/chudmax/web:0.1.0 --engine mock --host 0.0.0.0 --port 8080 >/dev/null
 code=""
 for _ in $(seq 1 60); do
   code=$(curl -s -o /dev/null -m 2 -w '%{http_code}' \
