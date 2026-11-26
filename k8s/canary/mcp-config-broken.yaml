@@ -1,0 +1,13 @@
+# The BROKEN upgrade's hub config: well-formed JSON (the hub parses it and
+# tries the server) whose URL is unreachable on purpose — a never-resolving
+# in-cluster name, no public IP. The verified silent-omission behavior then
+# makes the canary Ready-but-failing: /health stays 200, the hub reports
+# `tickets failed 0 tools`, so the pre-rollout webhook's tool asserts are what
+# catches the broken upgrade (not a probe, not a progress deadline).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chudmax-web-mcp-config-broken
+  namespace: chudmax
+data:
+  config.json: '{"mcpServers":{"tickets":{"url":"http://chudmax-mcp-dead.invalid:8080/mcp"}}}'
