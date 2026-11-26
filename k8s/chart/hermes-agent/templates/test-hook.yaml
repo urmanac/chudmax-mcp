@@ -37,6 +37,9 @@ spec:
           [ "$code" = "200" ]
           echo "hermes test hook: RECEIPT ok"
       securityContext:
+        # An explicit UID: without it the hook pod hits CreateContainerConfigError
+        # and `helm test` waits out its 5-minute timeout (the CI receipt, run #9).
+        runAsUser: 65534
         runAsNonRoot: true
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
