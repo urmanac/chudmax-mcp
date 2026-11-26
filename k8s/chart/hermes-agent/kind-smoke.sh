@@ -77,10 +77,14 @@ podman build --platform linux/amd64 -t ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0
   -f k8s/tickets-mcp/Dockerfile k8s/tickets-mcp
 for img in ghcr.io/urmanac/chudmax/fetcher:0.1.0 ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0; do
   podman save --format docker-archive -o /tmp/img.tar "$img"
-  docker load --input /tmp/img.tar
-  kind load docker-image "$img" --name "$CLUSTER"
+  docker load --input /tmp/img.tar >/dev/null
+  # CI receipt (run #3): `kind load docker-image` fails here — docker's re-save
+  # of the podman-built image emits the multi-entry manifest ctr rejects
+  # ("docker-archive doesn't support modifying existing images", exit 125).
+  # The phase-6 proven route: load the SAME archive via image-archive.
+  kind load image-archive /tmp/img.tar --name "$CLUSTER"
 done
-receipt "mcp pod images built (podman) and loaded"
+receipt "mcp pod images built (podman) and loaded (the phase-6 image-archive route)"
 
 # ---------- 2. the mock engine OUTSIDE kind on the bridge (read-only pin) ----------
 say "cloning Strata at the phase-6 pin and building the mock engine image..."
