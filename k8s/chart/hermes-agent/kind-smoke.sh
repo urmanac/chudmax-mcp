@@ -46,16 +46,21 @@ hermes_pod() {
 
 # kubectl exec with a retry (CI receipt, run #6): a pod can be Initialized
 # before its container exists — the first exec raced the container's start
-# ("unable to upgrade connection: container not found"). Retry through the
-# container's start; surface the pod's state if it never comes up.
+# ("unable to upgrade connection: container not found"). Retry ONLY the
+# connection-race errors; a real command failure (an import refusal, a config
+# rejection) surfaces IMMEDIATELY with its message so the receipt shows it.
 hexec() {
-  local attempt
+  local attempt err=/tmp/hexec.err
   for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    if kubectl -n "$NS" exec "$@"; then return 0; fi
-    say "exec failed (attempt $attempt) — the container may still be starting; retrying in 5s"
-    kubectl -n "$NS" get pod -l app.kubernetes.io/name=hermes-agent -o wide || true
+    if kubectl -n "$NS" exec "$@" 2>"$err"; then return 0; fi
+    if ! grep -qE 'unable to upgrade connection|container not found|error dialing backend|did not complete successfully' "$err"; then
+      cat "$err" >&2
+      return 1
+    fi
+    say "exec raced the container's start (attempt $attempt) — retrying in 5s"
     sleep 5
   done
+  cat "$err" >&2
   say "exec did not succeed in 12 attempts — the pod's state:"
   kubectl -n "$NS" get pod -l app.kubernetes.io/name=hermes-agent -o wide || true
   kubectl -n "$NS" get pod -l app.kubernetes.io/name=hermes-agent \
