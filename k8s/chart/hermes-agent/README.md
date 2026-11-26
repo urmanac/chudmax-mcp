@@ -103,9 +103,12 @@ kubectl exec <pod> -- hermes config set model.api_key none
 ```sh
 kubectl exec <pod> -- hermes backup -o /tmp/agent.zip
 kubectl cp <ns>/<pod>:/tmp/agent.zip ./agent.zip
-# onto an empty volume:
+# onto an empty volume (stop the s6 gateway first so state.db has no live holder,
+# import with --force over stage2's seeded defaults, then start it back up):
 kubectl cp ./agent.zip <ns>/<pod>:/tmp/agent.zip
-kubectl exec <pod> -- hermes import /tmp/agent.zip
+kubectl exec <pod> -- hermes gateway stop
+kubectl exec <pod> -- hermes import /tmp/agent.zip --force
+kubectl exec <pod> -- hermes gateway start
 kubectl -n <ns> rollout restart deploy <name>
 ```
 

@@ -237,13 +237,14 @@ VOL_AFTER=$(kubectl -n "$NS" get pvc hermes -o jsonpath='{.spec.volumeName}')
 say "volume: ${VOL_BEFORE} -> ${VOL_AFTER}"
 [ -n "$VOL_BEFORE" ] && [ -n "$VOL_AFTER" ] && [ "$VOL_BEFORE" != "$VOL_AFTER" ]
 receipt "fresh PVC, fresh volume (${VOL_AFTER}) — empty by construction"
-kubectl -n "$NS" cp /tmp/agent.zip "${NS}/$(hermes_pod):/tmp/agent.zip"
-if hexec deploy/hermes -- hermes import /tmp/agent.zip; then
-  say "import: plain form accepted"
-else
-  say "import: plain form refused — retrying with --force"
-  hexec deploy/hermes -- hermes import /tmp/agent.zip --force
-fi
+kubectl cp /tmp/agent.zip "${NS}/$(hermes_pod):/tmp/agent.zip"
+# Inside the s6 image the running gateway holds state.db open, and stage2 has
+# already seeded config.yaml/.env on the fresh volume: stop the s6 gateway so
+# state.db has no live holder, pass --force for non-interactive overwrite, and
+# mark desired_state back up (`hermes gateway start`) before the rollout restart.
+hexec deploy/hermes -- hermes gateway stop
+hexec deploy/hermes -- hermes import /tmp/agent.zip --force
+hexec deploy/hermes -- hermes gateway start
 kubectl -n "$NS" rollout restart deploy/hermes
 kubectl -n "$NS" rollout status deploy/hermes --timeout=360s
 grep -q "$MARKER" <(hexec deploy/hermes -- cat /opt/data/SOUL.md)

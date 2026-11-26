@@ -27,7 +27,8 @@ Persistent state and backup (the card's persistence story):
   image's lock), logs/.
 - Backup the whole agent: kubectl exec <pod> -- hermes backup -o /tmp/agent.zip
   then kubectl cp it off. Restore onto an empty volume: kubectl cp the zip in,
-  hermes import /tmp/agent.zip, restart the pod.
+  hermes gateway stop, hermes import /tmp/agent.zip --force, hermes gateway
+  start, and restart the pod.
 
 Reachability (NetworkPolicy):
 
