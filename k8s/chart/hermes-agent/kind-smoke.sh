@@ -71,18 +71,29 @@ else
 fi
 
 say "building the mcp pod's images with podman (the chart-default tags)..."
-podman build --platform linux/amd64 -t ghcr.io/urmanac/chudmax/fetcher:0.1.0 \
-  -f k8s/image/Dockerfile k8s
-podman build --platform linux/amd64 -t ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0 \
-  -f k8s/tickets-mcp/Dockerfile k8s/tickets-mcp
+# The phase-6 pbuild: parallel jobs pull base images from shared anonymous
+# buckets and a pull can fail transiently (podman exits 125) — retry, then die.
+pbuild() {
+  local tag="$1" file="$2" ctx="$3" attempt
+  for attempt in 1 2 3; do
+    if podman build -q -t "$tag" -f "$file" "$ctx"; then return 0; fi
+    say "build of $tag failed (attempt $attempt) — retrying after a pause"
+    sleep $((attempt * 20))
+  done
+  say "the build of $tag failed three times"; exit 1
+}
+pbuild ghcr.io/urmanac/chudmax/fetcher:0.1.0 k8s/image/Dockerfile k8s
+pbuild ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0 k8s/tickets-mcp/Dockerfile k8s/tickets-mcp
 for img in ghcr.io/urmanac/chudmax/fetcher:0.1.0 ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0; do
-  podman save --format docker-archive -o /tmp/img.tar "$img"
-  docker load --input /tmp/img.tar >/dev/null
-  # CI receipt (run #3): `kind load docker-image` fails here — docker's re-save
-  # of the podman-built image emits the multi-entry manifest ctr rejects
-  # ("docker-archive doesn't support modifying existing images", exit 125).
-  # The phase-6 proven route: load the SAME archive via image-archive.
-  kind load image-archive /tmp/img.tar --name "$CLUSTER"
+  # A UNIQUE archive per image (CI receipt run #4): reusing one path makes the
+  # second podman save APPEND to the existing docker-archive — podman refuses:
+  # "docker-archive doesn't support modifying existing images" (exit 125).
+  tar="/tmp/$(printf '%s' "$img" | tr '/:' '__').tar"
+  podman save --format docker-archive -o "$tar" "$img"
+  docker load --input "$tar" >/dev/null
+  # The phase-6 proven route: load the SAME archive via image-archive
+  # (`kind load docker-image` re-saves through docker and ctr rejects it).
+  kind load image-archive "$tar" --name "$CLUSTER"
 done
 receipt "mcp pod images built (podman) and loaded (the phase-6 image-archive route)"
 
@@ -91,13 +102,12 @@ say "cloning Strata at the phase-6 pin and building the mock engine image..."
 git init -q "$RUNNER_TEMP/strata" 2>/dev/null || true
 git -C "$RUNNER_TEMP/strata" fetch -q --depth 1 https://github.com/kingdonb/Strata "$STRATA_PIN"
 git -C "$RUNNER_TEMP/strata" checkout -q FETCH_HEAD
-podman build --platform linux/amd64 -t web-ci:0.1.0 \
-  -f k8s/umbrella/chudmax/web-image/Dockerfile "$RUNNER_TEMP/strata"
+pbuild web-ci:0.1.0 k8s/umbrella/chudmax/web-image/Dockerfile "$RUNNER_TEMP/strata"
 podman save --format docker-archive -o /tmp/web.tar web-ci:0.1.0
-docker load --input /tmp/web.tar
+docker load --input /tmp/web.tar >/dev/null
 docker rm -f hermes-mock-engine >/dev/null 2>&1 || true
 docker run -d --name hermes-mock-engine --network kind -p 8080:8080 \
-  -e STRATA_ALLOWED_HOSTS="chudmax-engine,localhost,127.0.0.1" \
+  -e STRATA_ALLOWED_HOSTS="chudmax-engine,chudmax-engine.chudmax.svc,chudmax-engine.chudmax.svc.cluster.local,localhost,127.0.0.1" \
   web-ci:0.1.0 --engine mock --host 0.0.0.0 --port 8080 >/dev/null
 code=""
 for _ in $(seq 1 60); do
