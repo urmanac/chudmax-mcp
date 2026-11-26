@@ -1,0 +1,54 @@
+# Default values for the chudmax-web chart.
+# The web IS Strata (the public fork, github.com/kingdonb/Strata) running its
+# serve.server with --engine mock — the card's "web chart with the mock
+# engine": one workload whose MockEngine answers chat with scripted replies
+# while /health, /mcp and /v1/chat/completions are real endpoints.
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 1
+
+image:
+  # The ChudMax web image — built from the public kingdonb/Strata at the pinned
+  # SHA recorded in the umbrella's README (k8s/umbrella/chudmax/README.md).
+  # UNPUBLISHED until the phase-10 publishing milestone: until then build and
+  # load it yourself — the umbrella's kind-smoke.sh does exactly that, tagged
+  # with this reference so pullPolicy: IfNotPresent uses the loaded image and
+  # no registry is touched.
+  repository: ghcr.io/urmanac/chudmax/web
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+  digest: ""
+
+# Pod-level service-account token automount: off — the web talks HTTP, not the
+# API server. (Pod-level only; the invalid container-level field was the 4b F3
+# lesson.)
+automountServiceAccountToken: false
+
+# Strata's serve.server. engineMode is a knob for the phase-15 route decision:
+# "mock" (default) runs the in-process scripted MockEngine; "strata" would
+# attach the real engine — wired in a later phase, not here.
+engineMode: mock
+port: 8080
+
+# The DNS-rebinding guard: without an API key, EVERY request first passes the
+# Host check (server.py's parse_request) — an unknown Host gets a 403 telling
+# the caller to add the name to STRATA_ALLOWED_HOSTS. "auto" renders this
+# release's Service DNS names + localhost/127.0.0.1 (what an in-cluster curl
+# and a port-forward actually send). A list is used verbatim; the "*"
+# wildcard disables the check — available, discouraged, documented.
+allowedHosts: auto
+
+# Probes against Strata's real /health (documented guess: revisit when the
+# fork's production shape lands at phase 10).
+probe:
+  path: /health
+
+# Passthroughs for values this chart does not model — e.g. --mcp-config with a
+# user-mounted ConfigMap registering the in-cluster tickets-mcp Service (the
+# phase-7 wiring; the README shows the example).
+extraEnv: []
+extraArgs: []
+
+resources: {}

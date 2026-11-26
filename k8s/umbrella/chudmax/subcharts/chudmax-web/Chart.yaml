@@ -1,0 +1,10 @@
+apiVersion: v2
+name: chudmax-web
+description: >-
+  The ChudMax web chart: Strata's serve.server with the in-process MockEngine
+  (--engine mock) — real /health, /mcp and /v1/chat/completions endpoints with
+  zero GPU. The image is built from the public kingdonb/Strata at a pinned SHA;
+  the chart is its Deployment, Service and guard configuration.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

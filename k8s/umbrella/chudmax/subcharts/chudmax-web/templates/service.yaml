@@ -1,0 +1,17 @@
+# The web's front door. In-cluster callers reach it by this Service's DNS name
+# — which is exactly the Host header Strata's guard expects (the allowedHosts
+# auto default renders this name).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "chudmax-web.fullname" . }}
+  labels:
+    {{- include "chudmax-web.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "chudmax-web.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.port }}
+      targetPort: http

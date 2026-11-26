@@ -1,0 +1,9 @@
+apiVersion: v2
+name: chudmax-engine
+description: >-
+  The ChudMax engine pointer: a Service without a selector plus an EndpointSlice
+  at the external engine's address. Renders NO workload — the engine stays where
+  it runs (the GPU host); the Service is its stable in-cluster name.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
