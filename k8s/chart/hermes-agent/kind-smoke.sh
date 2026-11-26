@@ -44,6 +44,23 @@ hermes_pod() {
     -o jsonpath='{.items[0].metadata.name}'
 }
 
+# kubectl exec with a retry (CI receipt, run #6): a pod can be Initialized
+# before its container exists — the first exec raced the container's start
+# ("unable to upgrade connection: container not found"). Retry through the
+# container's start; surface the pod's state if it never comes up.
+hexec() {
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    if kubectl -n "$NS" exec "$@"; then return 0; fi
+    say "exec failed (attempt $attempt) — the container may still be starting; retrying in 5s"
+    kubectl -n "$NS" get pod -l app.kubernetes.io/name=hermes-agent -o wide || true
+    sleep 5
+  done
+  say "exec did not succeed in 12 attempts — the pod's state:"
+  kubectl -n "$NS" describe pod -l app.kubernetes.io/name=hermes-agent || true
+  exit 1
+}
+
 # ---------- 0. cluster + bridge gateway ----------
 say "cluster: $(kubectl config current-context)"
 # The kind network's IPv4 gateway (docker may list the IPv6 IPAM block first —
@@ -132,14 +149,14 @@ kubectl -n "$NS" wait --for=condition=initialized pod -l app.kubernetes.io/name=
 # waiting for readiness: a gateway that refuses to boot without a provider
 # gets its config at the next s6 restart instead of wedging the wait below.
 say "seeding model-provider config + the SOUL.md marker (real agent state)..."
-kubectl -n "$NS" exec deploy/hermes -- hermes config set model.provider custom
-kubectl -n "$NS" exec deploy/hermes -- hermes config set model.model mock
-kubectl -n "$NS" exec deploy/hermes -- hermes config set model.base_url http://chudmax-engine:8080/v1
-kubectl -n "$NS" exec deploy/hermes -- hermes config set model.api_key none
-kubectl -n "$NS" exec deploy/hermes -- \
+hexec deploy/hermes -- hermes config set model.provider custom
+hexec deploy/hermes -- hermes config set model.model mock
+hexec deploy/hermes -- hermes config set model.base_url http://chudmax-engine:8080/v1
+hexec deploy/hermes -- hermes config set model.api_key none
+hexec deploy/hermes -- \
   sh -c "printf '%s\n' '${MARKER}' >> /opt/data/SOUL.md"
 grep -q "$MARKER" \
-  <(kubectl -n "$NS" exec deploy/hermes -- cat /opt/data/SOUL.md)
+  <(hexec deploy/hermes -- cat /opt/data/SOUL.md)
 receipt "seeded: provider config (4 config keys) + the SOUL.md marker"
 kubectl -n "$NS" rollout status deploy/hermes --timeout=360s
 receipt "hermes pod ready (startup probe through s6 stage2 passed)"
@@ -151,7 +168,7 @@ receipt "engine pointer hook: /health through the Service -> the bridge mock 200
 
 # ---------- 4. backup the whole agent, copy the zip to the runner ----------
 POD=$(hermes_pod)
-kubectl -n "$NS" exec "$POD" -- hermes backup -o /tmp/agent.zip
+hexec "$POD" -- hermes backup -o /tmp/agent.zip
 kubectl cp "${NS}/${POD}:/tmp/agent.zip" /tmp/agent.zip
 say "backup zip: $(stat -c%s /tmp/agent.zip) bytes"
 [ -s /tmp/agent.zip ]
@@ -161,8 +178,8 @@ receipt "hermes backup captured the home and reached the runner"
 kubectl -n "$NS" delete pod "$POD"
 kubectl -n "$NS" rollout status deploy/hermes --timeout=360s
 POD2=$(hermes_pod); [ "$POD2" != "$POD" ] || say "note: same pod name returned (statefulset-like naming)"
-grep -q "$MARKER" <(kubectl -n "$NS" exec "$POD2" -- cat /opt/data/SOUL.md)
-BASE_URL_READBACK=$(kubectl -n "$NS" exec "$POD2" -- hermes config get model.base_url)
+grep -q "$MARKER" <(hexec "$POD2" -- cat /opt/data/SOUL.md)
+BASE_URL_READBACK=$(hexec "$POD2" -- hermes config get model.base_url)
 say "config readback after pod delete: model.base_url=${BASE_URL_READBACK}"
 receipt "pod delete survived: marker + provider config on the same PVC (new pod ${POD2})"
 
@@ -181,16 +198,16 @@ say "volume: ${VOL_BEFORE} -> ${VOL_AFTER}"
 [ -n "$VOL_BEFORE" ] && [ -n "$VOL_AFTER" ] && [ "$VOL_BEFORE" != "$VOL_AFTER" ]
 receipt "fresh PVC, fresh volume (${VOL_AFTER}) — empty by construction"
 kubectl -n "$NS" cp /tmp/agent.zip "${NS}/$(hermes_pod):/tmp/agent.zip"
-if kubectl -n "$NS" exec deploy/hermes -- hermes import /tmp/agent.zip; then
+if hexec deploy/hermes -- hermes import /tmp/agent.zip; then
   say "import: plain form accepted"
 else
   say "import: plain form refused — retrying with --force"
-  kubectl -n "$NS" exec deploy/hermes -- hermes import /tmp/agent.zip --force
+  hexec deploy/hermes -- hermes import /tmp/agent.zip --force
 fi
 kubectl -n "$NS" rollout restart deploy/hermes
 kubectl -n "$NS" rollout status deploy/hermes --timeout=360s
-grep -q "$MARKER" <(kubectl -n "$NS" exec deploy/hermes -- cat /opt/data/SOUL.md)
-BASE_URL_RESTORED=$(kubectl -n "$NS" exec deploy/hermes -- hermes config get model.base_url)
+grep -q "$MARKER" <(hexec deploy/hermes -- cat /opt/data/SOUL.md)
+BASE_URL_RESTORED=$(hexec deploy/hermes -- hermes config get model.base_url)
 say "config readback after restore: model.base_url=${BASE_URL_RESTORED}"
 [ "$BASE_URL_RESTORED" = "$BASE_URL_READBACK" ]
 receipt "restore onto the empty volume: marker + provider config back (hermes import)"
@@ -224,7 +241,7 @@ receipt "chat through the Service -> the mock engine's scripted turn"
 MCP_POD_IP=$(kubectl -n "$NS" get pod -l app.kubernetes.io/name=chudmax-mcp \
   -o jsonpath='{.items[0].status.podIP}')
 say "mcp pod IP: ${MCP_POD_IP} (the Service is endpoint-less pre-artifact — the phase-6 lesson)"
-CODE=$(kubectl -n "$NS" exec deploy/hermes -- curl -s -o /dev/null -m 10 -w '%{http_code}' \
+CODE=$(hexec deploy/hermes -- curl -s -o /dev/null -m 10 -w '%{http_code}' \
   -X POST -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   "http://${MCP_POD_IP}:8080/mcp")
