@@ -4,11 +4,11 @@
 
 Labels follow `chudmax/AGENTS.md`: `verified-here` (run in this sandbox), `handoff-reported` (the CoS/Gemini steering), `speculation` (not yet exercised).
 
-## CI receipts (2026-11-26)
+## CI receipts (2026-11-26 — runs #1–#17; the kind rehearsal is GREEN on run #17)
 
-- **Run #1 (`verified-here`, PR #7):** `chart` job **green in CI** — all steps (lint ×2, template variants + guard negative test, shape checks, LAN hygiene) — the local battery transferred. `kind` job **failed at 2m25s** in the smoke's image section: the manifest-list pull succeeded (digest `sha256:ef0650d5…` recorded) but `kind load docker-image` failed on ctr's `--all-platforms` import — the arm64 blob (`sha256:2223ae…`, the arm64 instance digest from the Docker Hub receipt) was never pulled by the docker daemon.
-- **Run #2 (`verified-here`):** the per-arch-tag fix died at the pull — **`v0.23.4-amd64` is not pullable** (per-arch tags exist for rc/canary builds only; the final release publishes only list tags). Correction recorded; the requirements/design no longer claim final-release per-arch tags.
-- **Settled route (9ac4e24; `speculation` until the rerun): the node pre-pull via `crictl pull`** — containerd resolves the multi-arch list natively (the production path); the kubelet pull under `pullPolicy: IfNotPresent` is the fallback.
+- **Run #17 (`verified-here`, PR #7, head `76a674e`): BOTH jobs GREEN.** The `chart` job: lint ×2, kubeconform, template variants (the guard's negative test), securityContext shape checks, LAN hygiene — all green. The `kind` job: the FULL rehearsal passed — kind cluster, podman builds, the image-archive loads, the three helm installs, the seed (6 config keys + the SOUL.md marker), `hermes backup` (349 files, 3.3 MB → 1.1 MB) + `kubectl cp` out, the pod-delete survival readback, the PVC-gone poll, the fresh install (new PVC), the restore (`hermes import --force` with the s6 gateway stopped first), the mock-engine chat turn through the keyed API server, and the mcp POD-IP admission probe. The failure-receipt step is recorded as `skipped` — nothing failed.
+- **The journey that got here (each fix receipted in the run summary/annotations, all `verified-here`):** run #1 (`kind load docker-image` cannot import a manifest list — ctr's `--all-platforms` aborts on the unpulled arm64 blob) → node pre-pull via `crictl pull`; run #2 (`v0.23.4-amd64` not pullable — per-arch tags are rc/canary-only); runs #3–#5 (podman→docker→kind image-archive routes: unique archive paths per image, FQ image names survive the `localhost/` prefix round-trip); run #6 (exec raced the container start → retrying `hexec`); run #9 (k8s `command:` replaces the image ENTRYPOINT — `gateway run` renders as container `args:`; then the resilient initialized-wait); run #9's tail (the test-hook pod's `CreateContainerConfigError` burned `helm test`'s 5-min timeout → explicit `runAsUser: 65534`); run #11 (backup + pod-delete survival receipted; the PVC-gone check raced `Terminating` → poll to object-gone); run #12 (post-restore import refusal drowned by blind exec retries → `hexec` fails fast on real command errors, retrying only connection races); runs #14–#16 (the 64K context-window guards: hermes' `_enforce_minimum_context` and the aux-compression feasibility check both rejected the mock's model id at 32,768 → seeded `model.ollama_num_ctx 65536` + `auxiliary.compression.context_length 65536`; then the MOCK ITSELF 400'd — Strata's `MockEngine` hardcodes `max_context=32768` with no CLI/env knob → the rehearsal's entrypoint shim raises the default to 131,072, asserted via `/health`'s `max_context` ≥ 65,536 before hermes ever calls).
+- **Settled route (`verified-here` via run #17): the node pre-pull via `crictl pull`** — containerd resolves the multi-arch list natively (the production path); the kubelet pull under `pullPolicy: IfNotPresent` is the fallback.
 
 ## Local render proofs (2026-11-26, `verified-here`, sandbox; helm 3.16.4 + kubeconform 0.6.7 installed to ~/.local/bin — `/usr/local/bin` is not writable in this sandbox, a deviation from the phase-3 recipe worth remembering)
 
@@ -22,11 +22,15 @@ Labels follow `chudmax/AGENTS.md`: `verified-here` (run in this sandbox), `hando
 - **LAN-address hygiene:** `! grep -RInE '\b(10|172|192)\.[0-9]+\.[0-9]+\.[0-9]+\b' k8s/chart/hermes-agent .github/workflows/hermes-chart.yml` → clean (the only IP-shaped string anywhere is the digest hex, which does not match the dotted-quad pattern; TEST-NET-3 never needed in this chart).
 - **Script + workflow syntax:** `bash -n kind-smoke.sh` clean; the workflow YAML parses (checked with python-yaml); the script's `RUNNER_TEMP` defaults to `/tmp` so the sandbox can run its non-cluster parts.
 
-## What could NOT run here (`speculation` until the CI kind job greens it)
+## What the CI kind job proved (run #17 — previously `speculation`, now `verified-here`)
 
-- kind itself (rootless docker daemon, read-only cgroup2 — the phase-6 finding, re-confirmed by the tooling inventory of this sandbox: kind/kubectl/docker present, but the daemon is rootless). The kind job on GitHub's rootful runners is the authoritative receipt, per the phase-5/6 precedent.
-- The upstream image pull (~1.15 GB per arch) and its `kind load` timing — CI-only; the first run times it.
-- The mock-engine ladder, pod-delete survival, `hermes backup`/`hermes import` onto the fresh PVC, the chat turn, the mcp admission probe — all scripted (`kind-smoke.sh`, every step receipted with `RECEIPT:` lines) but not yet executed.
+kind cannot run in this sandbox (rootless docker daemon, read-only cgroup2 — the phase-6 finding, re-confirmed by the tooling inventory: kind/kubectl/docker present, but the daemon is rootless). The kind job on GitHub's rootful runners is the authoritative receipt, per the phase-5/6 precedent — and it landed on run #17 (`76a674e`):
+
+- The upstream image pull (~1.15 GB multi-arch list, node pre-pull) and the three-install rehearsal timing.
+- The seed + backup + `kubectl cp` out (349 files receipted), the pod-delete survival readback, the PVC-gone poll, the fresh install onto a NEW PVC (empty by construction), `hermes import --force` after stopping the s6 gateway, the restart, and the marker/config readback.
+- The mock-engine chat turn: a real `POST /v1/chat/completions` through the hermes Service with the bearer key, answered from the mock — the OpenAI-compatible interface path proven end to end.
+- The mcp admission probe: a request from the hermes pod to the tickets-mcp POD IP → 200 (the same-namespace rule proven; the Service is endpoint-less pre-artifact, per the phase-6 lesson).
+- The context-window chain: hermes' 64K floor (main + aux guards) and the mock's 32K hardcoded window — the rehearsal's fixes are receipted (`/health` `max_context` assertion included).
 
 ## Steering receipts (`handoff-reported`)
 
