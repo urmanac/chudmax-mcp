@@ -1,0 +1,31 @@
+# The web's Strata metrics. Strata serves the Prometheus text format on
+# GET /metrics?format=prometheus (verified: it also honors Prometheus's own
+# Accept: text/plain — the param is belt-and-suspenders). The selector targets
+# Services labeled app.kubernetes.io/name: chudmax-web, which catches the
+# original Service AND Flagger's cloned -primary/-canary Services (flagger
+# copies the original Service's labels — verified when phase 7 lands).
+#
+# No relabeling needed: Strata's Host guard admits IP-literal hosts (verified
+# in http_api.py::host_allowed), and Prometheus scrapes endpoints by IP.
+# With no API key set on the web Strata (the chart default) the scrape is
+# unauthenticated; if an API key is ever added, add an authorization block
+# like the engine ServiceMonitor's.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: chudmax-web
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  namespaceSelector: { }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chudmax-web
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      params:
+        format:
+          - prometheus

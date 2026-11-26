@@ -1,0 +1,35 @@
+# The configs profile: every chudmax scrape target, alert, Flagger template,
+# scrape-admission policy and dashboard — installable ALONE (platforms that
+# already run a Prometheus/VictoriaMetrics operator) or through the
+# controllers profile (kustomization-flux.yaml's monitoring-configs).
+#
+# Namespace handling: NO kustomization-level `namespace:` — kustomize's
+# namespace transformer overrides explicit per-file namespaces, and this
+# profile deliberately spans namespaces (monitoring for the operator objects,
+# flagger's home for the MetricTemplates, the release/Traefik namespaces for
+# the NetworkPolicies). Every object carries its explicit metadata.namespace
+# instead; the placeholders are documented per-install edits.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - podmonitor-flux.yaml
+  - podmonitor-flagger.yaml
+  - podmonitor-gateway.yaml
+  - servicemonitor-chudmax-web.yaml
+  - servicemonitor-chudmax-engine.yaml
+  - metrictemplates.yaml
+  - prometheusrules.yaml
+  - networkpolicy-allow-monitoring-scrape.yaml
+configMapGenerator:
+  - name: chudmax-grafana-dashboards
+    files:
+      - dashboards/chudmax-overview.json
+    options:
+      namespace: monitoring
+      labels:
+        grafana_dashboard: "1"
+        app.kubernetes.io/part-of: chudmax
+        app.kubernetes.io/component: monitoring
+        # the dashboard JSON is templated data for Grafana's sidecar, not for
+        # Flux's var substitution (upstream's own configs/kustomization sets this)
+        kustomize.toolkit.fluxcd.io/substitute: disabled

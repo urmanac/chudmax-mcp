@@ -1,0 +1,26 @@
+# The Gateway API controller's metrics: Traefik's Prometheus endpoint on :9100
+# (port name `metrics`), exporting traefik_service_requests_total and
+# traefik_service_request_duration_seconds_bucket once phase 7's Traefik runs
+# with providers.kubernetesGateway.enabled: true and addServicesLabels /
+# addRoutersLabels (the static-config side is the phase-7 install's values —
+# the interop contract is recorded in k8s/monitoring/README.md).
+#
+# namespaceSelector: {} for the same reason as podmonitor-flagger: Traefik's
+# home namespace is phase 7's choice. The label selector assumes the Traefik
+# chart's default pod label; if phase 7 installs Traefik differently, THIS
+# manifest turns (documented per-install edit).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: gateway-traefik
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  namespaceSelector: { }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s

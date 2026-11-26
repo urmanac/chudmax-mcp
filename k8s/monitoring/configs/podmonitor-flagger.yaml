@@ -1,0 +1,22 @@
+# Flagger's own metrics (:8080, port name `http` — verified against the stock
+# flagger deployment, which serves /metrics and /healthz on that single port).
+#
+# Flagger's home namespace is phase 7's decision, so this PodMonitor is
+# namespace-agnostic on purpose: spec.namespaceSelector: {} selects flagger
+# pods wherever they run. The endpoint targets the pod directly (no Service
+# required), so nothing else about the install matters.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flagger
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  namespaceSelector: { }
+  selector:
+    matchLabels:
+      app: flagger
+  podMetricsEndpoints:
+    - port: http
+      interval: 30s

@@ -1,0 +1,74 @@
+# Flagger MetricTemplates shared by phase 7's lightweight kind Prometheus and
+# phase 15's kube-prometheus-stack — the SAME objects, only the provider
+# address differs per profile (patch it per install; the table is in the
+# README). Thresholds are NOT baked in: the canary sets its own threshold /
+# thresholdRange against these queries, so phase 7 calibrates per environment.
+#
+# Calibrated to real LLM slot physics: Strata's requests take multi-second
+# decode times (3-6 s across 1-4 batch slots, longer when the queue is
+# non-empty) — a naive 500 ms microservice P99 would falsely roll back
+# healthy web upgrades. The TTFT P95 rides Strata's own vllm histogram
+# (buckets 0.001…2560 s, verified in terminal/serve/prometheus.py).
+#
+# Namespace: Flagger resolves MetricTemplates in the canary's namespace first,
+# then in flagger's own (speculation — verified at implementation); placing
+# them in flagger's namespace makes them reachable from canaries anywhere.
+# The placeholder below assumes phase 7 runs flagger in flux-system (the flux2
+# convention) — a per-install edit like the repo-sync manifests'.
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: chudmax-http-success-rate
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  provider:
+    type: prometheus
+    # Full-stack profile (kube-prometheus-stack). The lightweight-kind
+    # alternative (phase 7): http://prometheus.monitoring:9090 — README table.
+    address: http://kube-prometheus-stack-prometheus.monitoring:9090
+  query: |
+    100 - 100 * (
+      sum(rate(traefik_service_requests_total{service=~".*{{ .TargetService.Name }}.*", code=~"5.."}[2m]))
+      /
+      sum(rate(traefik_service_requests_total{service=~".*{{ .TargetService.Name }}.*"}[2m]))
+    )
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: chudmax-strata-ttft-p95
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  provider:
+    type: prometheus
+    address: http://kube-prometheus-stack-prometheus.monitoring:9090
+  # LLM prefill responsiveness: the 95th percentile time-to-first-token across
+  # every Strata target (the histogram's label set is the model name only).
+  # Threshold: queue-aware — see chudmax-strata-queue-depth; expect multi-second
+  # values on long prefill, never microservice-scale ones.
+  query: |
+    histogram_quantile(0.95, sum(rate(vllm:time_to_first_token_seconds_bucket[2m])) by (le))
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: chudmax-strata-queue-depth
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  provider:
+    type: prometheus
+    address: http://kube-prometheus-stack-prometheus.monitoring:9090
+  # Queue-awareness as a checkable metric: requests waiting for a slot
+  # (vllm:num_requests_waiting). A canary can gate its TTFT threshold on this
+  # (loosen the bound while the queue is draining) or alert on it directly.
+  query: |
+    max(vllm:num_requests_waiting)

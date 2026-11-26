@@ -1,0 +1,31 @@
+# Flux controller metrics: the 6 stock controllers PLUS source-watcher, all in
+# flux-system, all exposing Prometheus on a port NAMED http-prom (:8080 —
+# verified against source-watcher's deployment, whose metrics port carries the
+# same name as the Flux controllers'). Flux's shipped allow-scraping policy
+# already admits cross-namespace scrapes on :8080, so this PodMonitor needs no
+# companion NetworkPolicy.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flux-system
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - flux-system
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - helm-controller
+          - source-controller
+          - kustomize-controller
+          - notification-controller
+          - image-automation-controller
+          - image-reflector-controller
+          - source-watcher
+  podMetricsEndpoints:
+    - port: http-prom

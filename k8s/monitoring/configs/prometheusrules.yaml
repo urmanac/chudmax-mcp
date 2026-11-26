@@ -1,0 +1,58 @@
+# Alerts over the whole chudmax contract — validated by `promtool check rules`
+# in CI. Metric names:
+#   gotk_resource_info            — kube-state-metrics customResourceState Info
+#                                   (auto labels customresource_group/kind — the
+#                                   same labels upstream's dashboards query)
+#   gotk_canary_failed_checks     — the Canary Gauge from kube-state-metrics-config.yaml
+#   strata:gpu_*                  — Strata's own exposition (verified names:
+#                                   gpu_mem_total_bytes — the brief's
+#                                   gpu_total_bytes does not exist in the source)
+# GPU families label every sample with gpu="<index>"; the ratio aggregates per
+# card, so a multi-card host alerts on its hottest/fullest card only.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: chudmax-monitoring-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: chudmax
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    - name: chudmax.flux-sync
+      rules:
+        - alert: ChudmaxFluxSourceNotReady
+          expr: gotk_resource_info{customresource_kind=~"GitRepository|ArtifactGenerator|ExternalArtifact", ready="False"} == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "A Flux source object has been not-ready for 5 minutes"
+            description: "{{ $labels.customresource_kind }} {{ $labels.exported_namespace }}/{{ $labels.name }} reports Ready=False — repo-sync (or its generator) is stuck; check `flux get sources` and the controller logs."
+    - name: chudmax.canary
+      rules:
+        - alert: ChudmaxFlaggerCanaryFailedChecks
+          expr: gotk_canary_failed_checks > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "A Flagger canary is accumulating failed checks"
+            description: "Canary {{ $labels.exported_namespace }}/{{ $labels.name }} has {{ $value }} failed analysis checks — phase 7's canary thresholds decide rollback; this alert says the analysis is unhappy while it runs."
+    - name: chudmax.strata-gpu
+      rules:
+        - alert: ChudmaxStrataGpuMemorySaturated
+          expr: (strata:gpu_mem_used_bytes / strata:gpu_mem_total_bytes) > 0.95
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Strata GPU VRAM above 95% for 5 minutes"
+            description: "GPU {{ $labels.gpu }} is at {{ $value | humanizePercentage }} of VRAM — model placement (phase 11+) or the expert cache needs room."
+        - alert: ChudmaxStrataGpuHot
+          expr: strata:gpu_temp_celsius > 83
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Strata GPU temperature above 83°C for 5 minutes"
+            description: "GPU {{ $labels.gpu }} reports {{ $value }}°C — thermal headroom is gone; check airflow and power (strata:gpu_power_watts)."
