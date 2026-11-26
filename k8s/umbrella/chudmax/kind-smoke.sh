@@ -292,10 +292,13 @@ else
   echo "   the policy pre- or post-DNAT - the override admits BOTH addresses)"
   # the cidr rule: the VIP on 443 (the pre-DNAT match); the extra rule: the
   # control-plane endpoint on 443+6443 (the post-DNAT match)
+  # (phase-7 polish: the chart's key is the cidrs LIST — the pre-phase-5
+  # singular `cidr=` key was silently ignored and the 10.96.0.0/12 default
+  # rendered instead of the discovered VIP)
   helm upgrade chudmax "$CHART" -n "$NS" \
     --set engine.endpoint.host="$ENGINE_HOST" \
     --set mcp.networkPolicy.egress.apiServer.mode=cidr \
-    --set "mcp.networkPolicy.egress.apiServer.cidr=$VIP/32" \
+    --set "mcp.networkPolicy.egress.apiServer.cidrs[0]=$VIP/32" \
     --set 'mcp.networkPolicy.egress.extra[0].to[0].ipBlock.cidr'="$EP"/32 \
     --set 'mcp.networkPolicy.egress.extra[0].ports[0].protocol=TCP' \
     --set 'mcp.networkPolicy.egress.extra[0].ports[0].port=443' \
