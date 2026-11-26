@@ -1,0 +1,44 @@
+The hermes-agent chart is installed. The pod runs the upstream
+nousresearch/hermes-agent image ({{ .Values.image.repository }}:{{ .Values.image.tag }}) in one
+Recreate Deployment with the persistent HERMES_HOME volume at /opt/data, and —
+when apiServer.enabled — the keyed OpenAI-compatible API server on
+{{ .Values.apiServer.port }} (GET /health is the public probe route; /v1/* needs
+the bearer key).
+
+What this install does NOT have yet:
+
+1. A configured model provider. Hermes reads its provider from
+   $HERMES_HOME/config.yaml; the chart seeds none. Point it anywhere
+   (kubectl exec <pod> -- hermes config set model.provider custom;
+   hermes config set model.base_url http://<engine>:8080/v1; ...). Until a
+   provider works, /v1/chat/completions answers honestly that it cannot.
+2. Real API keys: the chart-created Secret (when apiServer.key was a literal)
+   is for rehearsals only; production passes apiServer.existingSecret and the
+   secrets mechanism is the placement phases' decision.
+
+Persistent state and backup (the card's persistence story):
+
+- The PVC ({{ .Values.storage.size }}) holds HERMES_HOME: config.yaml, .env,
+  SOUL.md, memories/, sessions/ (state.db — SQLite, WAL), skills/, profiles/,
+  cron/, hooks/, skins/, home/, plugins/, auth.json. It survives pod deletes
+  and node-local provisioners keep WAL semantics intact.
+- Regenerable (never backed up): cache/ (uv re-seeds from the image),
+  installs/ (PM dependency generations re-resolved at boot against the new
+  image's lock), logs/.
+- Backup the whole agent: kubectl exec <pod> -- hermes backup -o /tmp/agent.zip
+  then kubectl cp it off. Restore onto an empty volume: kubectl cp the zip in,
+  hermes gateway stop, hermes import /tmp/agent.zip --force, hermes gateway
+  start, and restart the pod.
+
+Reachability (NetworkPolicy):
+
+- The mcp chart's default ingress NetworkPolicy admits SAME-NAMESPACE pods to
+  the ticket server — install this chart into the same namespace as the
+  chudmax-mcp release and hermes can reach it (the phase-9 rehearsal proves
+  this). A foreign-namespace install must add the rule itself via that chart's
+  networkPolicy.ingress.extra passthrough.
+
+The TUI/CLI is interactive-only — reach it with kubectl exec (the image's exec
+shim drops root callers to UID 10000, so files land with the right ownership).
+The dashboard/webapp stay off by default (upstream fails closed on non-loopback
+binds without an auth provider); the README documents the enable recipes.

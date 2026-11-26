@@ -1,0 +1,50 @@
+{{- if and .Values.apiServer.enabled .Values.test.enabled }}
+# The Helm test hook: proves the Service path end to end — the public
+# /health (no auth) and the authenticated /v1/models with the key from the
+# same Secret the deployment reads (the key wiring proven, not assumed).
+# Runs only on explicit `helm test`.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "hermes-agent.fullname" . }}-test
+  labels:
+    {{- include "hermes-agent.selectorLabels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  containers:
+    - name: curl
+      image: curlimages/curl:8.12.1
+      env:
+        - name: HERMES_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "hermes-agent.apiKeySecretName" . }}
+              key: {{ .Values.apiServer.existingSecretKey | default "API_SERVER_KEY" }}
+      command: ["/bin/sh", "-ec"]
+      args:
+        - |
+          svc="{{ include "hermes-agent.fullname" . }}:{{ .Values.apiServer.port }}"
+          code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://${svc}/health")
+          echo "GET /health -> ${code}"
+          [ "$code" = "200" ]
+          code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' \
+            -H "Authorization: Bearer ${HERMES_KEY}" "http://${svc}/v1/models")
+          echo "GET /v1/models (bearer) -> ${code}"
+          [ "$code" = "200" ]
+          echo "hermes test hook: RECEIPT ok"
+      securityContext:
+        # An explicit UID: without it the hook pod hits CreateContainerConfigError
+        # and `helm test` waits out its 5-minute timeout (the CI receipt, run #9).
+        runAsUser: 65534
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop: ["ALL"]
+{{- end }}
