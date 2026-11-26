@@ -25,6 +25,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: chudmax-engine
+  namespace: monitoring
   labels:
     app.kubernetes.io/part-of: chudmax
     app.kubernetes.io/component: monitoring

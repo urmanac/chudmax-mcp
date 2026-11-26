@@ -4,11 +4,18 @@
 # controllers profile (kustomization-flux.yaml's monitoring-configs).
 #
 # Namespace handling: NO kustomization-level `namespace:` — kustomize's
-# namespace transformer overrides explicit per-file namespaces, and this
-# profile deliberately spans namespaces (monitoring for the operator objects,
-# flagger's home for the MetricTemplates, the release/Traefik namespaces for
-# the NetworkPolicies). Every object carries its explicit metadata.namespace
-# instead; the placeholders are documented per-install edits.
+# namespace transformer OVERRIDES explicit per-file namespaces (verified with
+# a build: a ConfigMap pinned to flux-system came out `monitoring`), and this
+# profile deliberately spans namespaces. Every object pins its explicit
+# metadata.namespace instead:
+#   - monitoring:         the operator objects (Pod/ServiceMonitors, the
+#                         PrometheusRule, the dashboard ConfigMap) — the
+#                         operator discovers them by label from anywhere, but
+#                         pinning keeps placement deterministic under Flux
+#                         (the pair sets no targetNamespace) and kubectl -k
+#   - flux-system:        the MetricTemplates (flagger's home — per-install
+#                         edit) and the Traefik NetworkPolicy (per-install edit)
+#   - chudmax-releases:   the web NetworkPolicy (per-install edit)
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -20,16 +27,4 @@ resources:
   - metrictemplates.yaml
   - prometheusrules.yaml
   - networkpolicy-allow-monitoring-scrape.yaml
-configMapGenerator:
-  - name: chudmax-grafana-dashboards
-    files:
-      - dashboards/chudmax-overview.json
-    options:
-      namespace: monitoring
-      labels:
-        grafana_dashboard: "1"
-        app.kubernetes.io/part-of: chudmax
-        app.kubernetes.io/component: monitoring
-        # the dashboard JSON is templated data for Grafana's sidecar, not for
-        # Flux's var substitution (upstream's own configs/kustomization sets this)
-        kustomize.toolkit.fluxcd.io/substitute: disabled
+  - dashboards-configmap.yaml

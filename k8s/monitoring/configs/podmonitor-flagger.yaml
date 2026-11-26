@@ -9,6 +9,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
   name: flagger
+  namespace: monitoring
   labels:
     app.kubernetes.io/part-of: chudmax
     app.kubernetes.io/component: monitoring
