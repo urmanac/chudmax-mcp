@@ -99,3 +99,17 @@ Sandbox honesty (the phase-6 pattern): this sandbox has docker + kubectl but no 
 - The Host guard is a non-issue for scrapers (IP hosts pass) — do not add speculative relabeling; if a future guard hardens, the documented Service-DNS relabel is the fallback.
 - The `gotk_` KSM metrics are INFO-valued (always 1): alert on label state (`ready="False"`), never on value; numeric states (failedChecks, canaryWeight) must be Gauge metrics, which is why the Canary block has both.
 - Strata's GPU metric family labels each sample with `gpu="<index>"` — `sum by` or aggregate before alerting on multi-card hosts.
+
+## Implementation notes (2026-11-26, local receipts)
+
+All six validation receipts ran green in the sandbox (CI re-proves them): kustomize v5.4.3 builds (4 + 12 docs, every namespace as designed), flux-schema v0.18.0 (4 Flux resources valid), kubeconform v0.6.7 `-strict` (16/16 valid, 0 skipped — every CRD schema resolved from the datreeio CRDs-catalog, no fallback needed), promtool v2.53.4 (4 alerts + the 3 MetricTemplate queries SUCCESS — the `{{ .TargetService.Name }}` templates sit inside quoted matchers and parse as plain PromQL), the Strata scrape smoke (tag `v0.2.21-mbp.rtx.1` = `de34eba`: mock server up on loopback, completion answered, `/metrics?format=prometheus` returned 86 `vllm:` + 18 `strata:` samples and `promtool check metrics` parsed it with only the expected vLLM `:`-name lint — `promtool`'s lint flags colon names, which is vLLM's own convention, so the CI job fails only on anything beyond that lint), and the hygiene grep (clean).
+
+Two kustomize behaviors proven by experiment and encoded in the manifests:
+1. The kustomization-level `namespace:` transformer OVERRIDES explicit per-file namespaces — configs/ therefore uses no kustomization-level namespace and every object pins its own `metadata.namespace`.
+2. Patches never match generated resources (neither by bare name nor by labelSelector) — the dashboard ConfigMap is therefore a static manifest with the JSON inlined, not a configMapGenerator product.
+
+Deviations from the approved design, all recorded:
+- A third MetricTemplate, `chudmax-strata-queue-depth` (`max(vllm:num_requests_waiting)`) — the design's queue-awareness exposed as its own checkable gate for phase 7's canaries.
+- The web scrape-admission NetworkPolicy also admits Traefik pods (the Gateway data plane), Flagger pods and same-namespace callers — the Open Question 4 composition resolved conservatively so applying the monitoring overlay can never sever Gateway traffic; the README's composition section documents the union rule.
+- The dashboard ships as `configs/dashboards-configmap.yaml` (static, namespace-pinned) instead of a `dashboards/*.json` file behind the generator.
+- Open Questions 1–3 (Traefik namespace/labels, MetricTemplate namespace placeholder, the reconciling GitRepository's name) remain per-install edits documented in the README — they turn at phase 7 / phase 12.
