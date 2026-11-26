@@ -90,6 +90,7 @@ if docker exec "${CLUSTER}-control-plane" crictl pull "$HERMES_IMAGE"; then
 else
   say "crictl pre-pull failed — the kubelet will pull at schedule time (IfNotPresent)"
 fi
+docker exec "${CLUSTER}-control-plane" crictl images | grep hermes-agent || say "the image is NOT in the node's store yet"
 
 say "building the mcp pod's images with podman (the chart-default tags)..."
 # The phase-6 pbuild: parallel jobs pull base images from shared anonymous
@@ -152,7 +153,21 @@ helm install engine k8s/umbrella/chudmax/subcharts/chudmax-engine -n "$NS" \
 helm install mcp k8s/chart/chudmax-mcp -n "$NS" --set fullnameOverride=chudmax-mcp
 helm install hermes k8s/chart/hermes-agent -n "$NS" \
   --set fullnameOverride=hermes --set apiServer.key="$KEY"
-kubectl -n "$NS" wait --for=condition=initialized pod -l app.kubernetes.io/name=hermes-agent --timeout=180s
+if kubectl -n "$NS" wait --for=condition=initialized pod -l app.kubernetes.io/name=hermes-agent --timeout=180s; then
+  :
+else
+  # Diagnose, then retry longer: a slow kubelet image pull (the crictl pre-pull
+  # fallback path) can eat the first window; a stuck pod names itself here.
+  say "the initialized wait timed out once — the state:"
+  kubectl -n "$NS" get pods -o wide || true
+  kubectl -n "$NS" get pvc || true
+  kubectl -n "$NS" get events --sort-by=.lastTimestamp | tail -25 || true
+  if ! kubectl -n "$NS" wait --for=condition=initialized pod -l app.kubernetes.io/name=hermes-agent --timeout=300s; then
+    kubectl -n "$NS" describe pod -l app.kubernetes.io/name=hermes-agent || true
+    exit 1
+  fi
+  say "initialized on the extended wait"
+fi
 # Seed the provider config as soon as the container is initialized — BEFORE
 # waiting for readiness: a gateway that refuses to boot without a provider
 # gets its config at the next s6 restart instead of wedging the wait below.
