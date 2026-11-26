@@ -35,8 +35,9 @@ web:
     - localhost
     - 127.0.0.1
   mcpConfig:
-    tickets:
-      url: http://chudmax-mcp:8080/mcp
+    mcpServers:
+      tickets:
+        url: http://chudmax-mcp:8080/mcp
   podAnnotations:
     prometheus.io/scrape: "true"
     prometheus.io/port: "8080"
