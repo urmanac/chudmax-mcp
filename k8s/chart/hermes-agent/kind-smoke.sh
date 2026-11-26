@@ -191,6 +191,30 @@ else
   fi
   say "initialized on the extended wait"
 fi
+# kubectl wait --for=condition=initialized returns instantly for a pod with NO
+# initContainers — even while the container is still ContainerCreating (the
+# f15cd4c race: the first exec hit "container not found"). hexec's retries
+# paper over that per-command; the poll below fixes it at the root. s6's
+# stage2-hook.sh seeds SOUL.md on first boot (seed_one, AFTER config.yaml and
+# the .env/API-key machinery — stage2-hook.sh L446-448 at the v0.23.4 pin), so
+# its existence proves stage2 finished: volume chowned, config.yaml in place.
+# On later boots (pod delete, fresh-PVC restore) the file already exists — the
+# poll passes on the first successful exec.
+say "waiting for s6 stage2 to seed SOUL.md (the boot-complete signal)..."
+SEEDED=""
+for _ in $(seq 1 60); do
+  if kubectl -n "$NS" exec deploy/hermes -- test -f /opt/data/SOUL.md >/dev/null 2>&1; then
+    SEEDED=1; break
+  fi
+  sleep 5
+done
+[ "$SEEDED" = "1" ] || {
+  say "SOUL.md never appeared - stage2 did not finish in 300s"
+  kubectl -n "$NS" get pods -o wide || true
+  kubectl -n "$NS" logs deploy/hermes --tail=100 || true
+  exit 1
+}
+receipt "s6 stage2 boot complete (SOUL.md seeded, config.yaml in place)"
 # Seed the provider config as soon as the container is initialized — BEFORE
 # waiting for readiness: a gateway that refuses to boot without a provider
 # gets its config at the next s6 restart instead of wedging the wait below.
