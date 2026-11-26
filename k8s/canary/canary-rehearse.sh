@@ -29,7 +29,7 @@ GIT_ROOT=${REHEARSAL_GIT_ROOT:-/tmp/canary-git}
 LOGS=${REHEARSAL_LOGS:-/tmp/canary-logs}
 SUMMARY=${REHEARSAL_SUMMARY:-/tmp/canary-summary.txt}
 PROVIDER=${KIND_EXPERIMENTAL_PROVIDER:-docker}
-BUILDER=${REHEARSAL_BUILDER:-$PROVIDER}
+BUILDER=${REHEARSAL_BUILDER:-podman}
 CHAIN_WAIT=${REHEARSAL_CHAIN_WAIT:-240}    # seconds a commit may take to show up
 STRATA_REPO=${STRATA_REPO:-https://github.com/kingdonb/Strata}
 STRATA_PIN=de34ebaa521d8f628b4bb1884e5c34101730299a   # v0.2.21-mbp.rtx.1 (the umbrella README's pin)
@@ -191,11 +191,21 @@ pbuild "$WEB_IMAGE" "$REPO/k8s/umbrella/chudmax/web-image/Dockerfile" "$LOGS/str
 "$BUILDER" tag "$WEB_IMAGE" "$WEB_BROKEN"
 pbuild "$FETCHER_IMAGE" "$REPO/k8s/image/Dockerfile" "$REPO/k8s"
 pbuild "$SERVER_IMAGE" "$REPO/k8s/tickets-mcp/Dockerfile" "$REPO/k8s/tickets-mcp"
-"$BUILDER" pull -q "$CURL_IMAGE" >/dev/null
+if [ "$BUILDER" = "podman" ]; then
+  podman pull --platform linux/amd64 -q "$CURL_IMAGE" >/dev/null
+else
+  "$BUILDER" pull -q "$CURL_IMAGE" >/dev/null
+fi
 for img in "$WEB_IMAGE" "$WEB_GOOD" "$WEB_BROKEN" "$FETCHER_IMAGE" "$SERVER_IMAGE" "$CURL_IMAGE"; do
-  tar="$LOGS/$(printf '%s' "$img" | tr '/:' '__').tar"
-  "$BUILDER" save --format docker-archive -o "$tar" "$img"
+  tar="/tmp/$(printf '%s' "$img" | tr '/:' '__').tar"
+  rm -f "$tar"
+  if [ "$BUILDER" = "podman" ]; then
+    podman save --format docker-archive -o "$tar" "$img"
+  else
+    "$BUILDER" save -o "$tar" "$img"
+  fi
   kind load image-archive --name "$CLUSTER" "$tar"
+  rm -f "$tar"
   echo "  loaded: $img"
 done
 receipt "images built and loaded via archive (no registry): web 0.1.0/0.1.1/0.1.1-broken (same bytes), fetcher, tickets-mcp, curl"
