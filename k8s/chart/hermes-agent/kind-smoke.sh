@@ -103,15 +103,10 @@ helm install engine k8s/umbrella/chudmax/subcharts/chudmax-engine -n "$NS" \
 helm install mcp k8s/chart/chudmax-mcp -n "$NS" --set fullnameOverride=chudmax-mcp
 helm install hermes k8s/chart/hermes-agent -n "$NS" \
   --set fullnameOverride=hermes --set apiServer.key="$KEY"
-kubectl -n "$NS" rollout status deploy/hermes --timeout=360s
-receipt "hermes pod ready (startup probe through s6 stage2 passed)"
-helm test hermes -n "$NS"
-receipt "helm test hook: /health 200 + bearer /v1/models 200 through the Service"
-# The engine pointer's own hook: /health through the Service -> the bridge mock.
-helm test engine -n "$NS"
-receipt "engine pointer hook: /health through the Service -> the bridge mock 200"
-
-# ---------- 4. seed state (config via exec; the exec shim drops to UID 10000) ----------
+kubectl -n "$NS" wait --for=condition=initialized pod -l app.kubernetes.io/name=hermes-agent --timeout=180s
+# Seed the provider config as soon as the container is initialized — BEFORE
+# waiting for readiness: a gateway that refuses to boot without a provider
+# gets its config at the next s6 restart instead of wedging the wait below.
 say "seeding model-provider config + the SOUL.md marker (real agent state)..."
 kubectl -n "$NS" exec deploy/hermes -- hermes config set model.provider custom
 kubectl -n "$NS" exec deploy/hermes -- hermes config set model.model mock
@@ -122,11 +117,18 @@ kubectl -n "$NS" exec deploy/hermes -- \
 grep -q "$MARKER" \
   <(kubectl -n "$NS" exec deploy/hermes -- cat /opt/data/SOUL.md)
 receipt "seeded: provider config (4 config keys) + the SOUL.md marker"
+kubectl -n "$NS" rollout status deploy/hermes --timeout=360s
+receipt "hermes pod ready (startup probe through s6 stage2 passed)"
+helm test hermes -n "$NS"
+receipt "helm test hook: /health 200 + bearer /v1/models 200 through the Service"
+# The engine pointer's own hook: /health through the Service -> the bridge mock.
+helm test engine -n "$NS"
+receipt "engine pointer hook: /health through the Service -> the bridge mock 200"
 
 # ---------- 5. backup the whole agent, copy the zip to the runner ----------
 POD=$(hermes_pod)
 kubectl -n "$NS" exec "$POD" -- hermes backup -o /tmp/agent.zip
-kubectl -n "$NS" cp "$POD:/tmp/agent.zip" /tmp/agent.zip
+kubectl cp "${NS}/${POD}:/tmp/agent.zip" /tmp/agent.zip
 say "backup zip: $(stat -c%s /tmp/agent.zip) bytes"
 [ -s /tmp/agent.zip ]
 receipt "hermes backup captured the home and reached the runner"
@@ -154,7 +156,7 @@ VOL_AFTER=$(kubectl -n "$NS" get pvc hermes -o jsonpath='{.spec.volumeName}')
 say "volume: ${VOL_BEFORE} -> ${VOL_AFTER}"
 [ -n "$VOL_BEFORE" ] && [ -n "$VOL_AFTER" ] && [ "$VOL_BEFORE" != "$VOL_AFTER" ]
 receipt "fresh PVC, fresh volume (${VOL_AFTER}) — empty by construction"
-kubectl -n "$NS" cp /tmp/agent.zip "$(hermes_pod):/tmp/agent.zip"
+kubectl -n "$NS" cp /tmp/agent.zip "${NS}/$(hermes_pod):/tmp/agent.zip"
 if kubectl -n "$NS" exec deploy/hermes -- hermes import /tmp/agent.zip; then
   say "import: plain form accepted"
 else
