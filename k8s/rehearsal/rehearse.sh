@@ -181,22 +181,22 @@ STARTED0=$(started_at)
 mcp_call() { # $1 = tool, $2 = arguments json (default {})
   local args="${2:-{\}}" name
   name="mcp-$$-$RANDOM"
-  kubectl -n "$NS" run "$name" --restart=Never --image=curlimages/curl:8.14.1 \
+  kubectl -n "$NS" run "$name" --restart=Never --image=curlimages/curl:8.14.1 -q \
+    --overrides '{"spec":{"automountServiceAccountToken":false}}' \
     --command -- sh -c "sleep 3; curl -sS -X POST -H 'Content-Type: application/json' \
     -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$args}}' \
-    http://rehearsal-chudmax-mcp.$NS.svc:8080/mcp; sleep 1" \
-    -q --overrides '{"spec":{"automountServiceAccountToken":false}}' >/dev/null 2>&1
+    http://rehearsal-chudmax-mcp.$NS.svc:8080/mcp; sleep 1" >/dev/null 2>&1
   sleep 7
   kubectl -n "$NS" logs "$name" 2>/dev/null | grep -v '^$' | head -5 || true
 }
 start_poller() { # continuous list_tickets polling for $1 seconds — runs across the swap
   kubectl -n "$NS" delete pod poller --force --grace-period=0 >/dev/null 2>&1 || true
-  kubectl -n "$NS" run poller --restart=Never --image=curlimages/curl:8.14.1 \
+  kubectl -n "$NS" run poller --restart=Never --image=curlimages/curl:8.14.1 -q \
+    --overrides '{"spec":{"automountServiceAccountToken":false}}' \
     --command -- sh -c "sleep 3; i=0; while [ \$i -lt $(( $1 / 2 )) ]; do \
       echo \"POLL \$i: \$(curl -sS --max-time 4 -X POST -H 'Content-Type: application/json' \
       -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"list_tickets\",\"arguments\":{}}}' \
-      http://rehearsal-chudmax-mcp.$NS.svc:8080/mcp | head -c 600)\"; sleep 2; i=\$((i+1)); done" \
-    -q --overrides '{"spec":{"automountServiceAccountToken":false}}' >/dev/null
+      http://rehearsal-chudmax-mcp.$NS.svc:8080/mcp | head -c 600)\"; sleep 2; i=\$((i+1)); done" >/dev/null
 }
 wait_for_ticket() { # $1 = ticket id; polls the POLLER'S LOG only (nobody touches Flux or the pod)
   for _ in $(seq 1 $(( CHAIN_WAIT / 5 ))); do
@@ -331,12 +331,16 @@ STARTED2=$(started_at); RC2=$(restarts_now)
   || fail "the policy-only upgrade restarted the pod (startedAt $STARTED2, restarts $RC2)"
 CNP_AFTER=$(kubectl -n "$NS" get cnp -o name 2>/dev/null || true)
 [ -z "$CNP_AFTER" ] || fail "the CNP survived the upgrade to cidr mode: $CNP_AFTER"
-kubectl -n "$NS" run apiprobe --restart=Never --serviceaccount=rehearsal-chudmax-mcp \
-  --image=curlimages/curl:8.14.1 --labels app.kubernetes.io/name=chudmax-mcp \
+# NOTE: kubectl 1.33+ removed `run --serviceaccount` — the SA and the token
+# mount go through --overrides (placed BEFORE the -- so kubectl parses them;
+# anything after -- is the container's argv, not flags).
+kubectl -n "$NS" run apiprobe --restart=Never --image=curlimages/curl:8.14.1 \
+  --labels app.kubernetes.io/name=chudmax-mcp -q \
+  --overrides '{"spec":{"serviceAccountName":"rehearsal-chudmax-mcp","automountServiceAccountToken":true}}' \
   --command -- sh -c "sleep 3; curl -sS --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
   -H \"Authorization: Bearer \$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\" \
   https://kubernetes.default.svc/apis/source.toolkit.fluxcd.io/v1/namespaces/$NS/externalartifacts/chudmax-tickets; sleep 1" \
-  -q --overrides '{"spec":{"automountServiceAccountToken":true}}' >/dev/null 2>&1
+  >/dev/null 2>&1
 sleep 8
 APIPROBE=$(kubectl -n "$NS" logs apiprobe 2>/dev/null || true)
 grep -q '"kind": *"ExternalArtifact"' <<<"$APIPROBE" \
@@ -368,9 +372,9 @@ receipt "retention proven: $COUNT4 dirs (<=3) after the 4th revision; the first 
 
 # ------------------------------------------------------------- the denials
 note "the denials: a rogue pod (default SA, no release labels)"
-kubectl -n "$NS" run rogue --restart=Never --image=curlimages/curl:8.14.1 \
-  --command -- sh -c "sleep infinity" -q \
-  --overrides '{"spec":{"automountServiceAccountToken":true}}' >/dev/null
+kubectl -n "$NS" run rogue --restart=Never --image=curlimages/curl:8.14.1 -q \
+  --overrides '{"spec":{"automountServiceAccountToken":true}}' \
+  --command -- sh -c "sleep infinity" >/dev/null
 sleep 6
 RBAC=$(kubectl -n "$NS" exec rogue -- sh -c "curl -sS --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
   -H \"Authorization: Bearer \$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\" \
@@ -384,8 +388,9 @@ grep -qE 'exit=(7|28|35)' <<<"$TARBALL" \
 receipt "network denial: the rogue pod's tarball GET denied ($TARBALL) — the fences bite"
 kubectl -n "$NS" delete pod rogue --force --grace-period=0 >/dev/null 2>&1 || true
 kubectl -n "$NS" run control --restart=Never --image=curlimages/curl:8.14.1 \
-  --labels app.kubernetes.io/name=chudmax-mcp --command -- sh -c "sleep infinity" -q \
-  --overrides '{"spec":{"automountServiceAccountToken":false}}' >/dev/null
+  --labels app.kubernetes.io/name=chudmax-mcp -q \
+  --overrides '{"spec":{"automountServiceAccountToken":false}}' \
+  --command -- sh -c "sleep infinity" >/dev/null
 sleep 6
 CTRL=$(kubectl -n "$NS" exec control -- curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$ART_URL" 2>&1; echo "exit=$?")
 grep -q 'exit=0' <<<"$CTRL" \
