@@ -162,10 +162,15 @@ jobs:
       - name: The scrape contract the ServiceMonitors pin
         run: |
           curl -s 'http://127.0.0.1:8095/metrics?format=prometheus' > /tmp/metrics.txt
-          test "$(grep -c '^vllm:' /tmp/metrics.txt)" -gt 10 || { echo "no vllm: families"; exit 1; }
-          grep -q '^vllm:request_success_total' /tmp/metrics.txt
-          grep -q '^vllm:time_to_first_token_seconds_bucket' /tmp/metrics.txt
-          grep -q '^strata:gpu_mem_total_bytes' /tmp/metrics.txt
+          test "$(grep -c '^vllm:' /tmp/metrics.txt)" -gt 10 || { echo "no vllm: families"; cat /tmp/metrics.txt; exit 1; }
+          # strata:gpu_* ride hardware readings — absent on a CPU-only runner
+          # (prometheus.py emits the gpu families only when a GPU is found);
+          # the cpu/ram and live_state families always are, so those are the
+          # strata: half of the contract the smoke asserts here
+          grep -q '^vllm:request_success_total' /tmp/metrics.txt || { echo "missing expected metric"; cat /tmp/metrics.txt; exit 1; }
+          grep -q '^vllm:time_to_first_token_seconds_bucket' /tmp/metrics.txt || { echo "missing expected metric"; cat /tmp/metrics.txt; exit 1; }
+          grep -q '^strata:ram_total_bytes' /tmp/metrics.txt || { echo "missing expected metric"; cat /tmp/metrics.txt; exit 1; }
+          grep -q '^strata:live_state' /tmp/metrics.txt || { echo "missing expected metric"; cat /tmp/metrics.txt; exit 1; }
           # promtool's metric-name lint flags the ':' names — that IS vLLM's
           # own naming convention (vllm:num_requests_running et al.), mirrored
           # by Strata for client compatibility. The job fails on anything
