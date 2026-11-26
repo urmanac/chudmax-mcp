@@ -1,7 +1,7 @@
 # Implementation Tasks: chudmax k8s phase 9 Hermes chart with persistent home
 
-- [ ] Verify preconditions: phases 5 & 6 merged on main @ `0787cfe`; branch off current `main`; confirm the phase-7 surfaces (`k8s/umbrella/**`, `k8s/canary/**`, phase-7 workflows) are untouched by this branch for its whole life
-- [ ] Create `k8s/chart/hermes-agent/Chart.yaml` (v2, `hermes-agent` 0.1.0, appVersion `0.23.4` — named for the phase-10 split) and `values.yaml` (minimal: image `nousresearch/hermes-agent:v0.23.4` + digest knob, `apiServer` block, `storage` block, resources, `terminationGracePeriodSeconds`, `extraEnv`, `securityContext` passthrough)
+- [x] Verify preconditions: phases 5 & 6 merged on main @ `0787cfe`; branch `feature/000895-chudmax-k8s-phase-9` created off it; phase-7 surfaces absent from `main` (no `k8s/canary/`, no phase-7 workflow) — the branch must keep them untouched for its whole life
+- [~] Create `k8s/chart/hermes-agent/Chart.yaml` (v2, `hermes-agent` 0.1.0, appVersion `0.23.4` — named for the phase-10 split) and `values.yaml` (minimal: image `nousresearch/hermes-agent:v0.23.4` + digest knob, `apiServer` block, `storage` block, resources, `terminationGracePeriodSeconds`, `extraEnv`, `securityContext` passthrough)
 - [ ] Templates: Deployment (`strategy: Recreate`, `automountServiceAccountToken: false`, `seccompProfile: RuntimeDefault`, NO `runAsNonRoot`, PVC mounted at `/opt/data`, `gateway run` args) — with a render guard failing loudly when `apiServer.enabled` but no key
 - [ ] Templates: Service (8642), PVC (RWO, 2Gi default, `storageClass` empty = cluster default), optional Secret from `apiServer.key` / `existingSecret` reference
 - [ ] Templates: Helm test hook (pinned `curlimages/curl`) — `/health` → 200 and authenticated `/v1/models` → 200 with the key from the Secret
