@@ -210,9 +210,21 @@ receipt "pod delete survived: marker + provider config on the same PVC (new pod 
 VOL_BEFORE=$(kubectl -n "$NS" get pvc hermes -o jsonpath='{.spec.volumeName}')
 kubectl -n "$NS" get pvc hermes
 helm uninstall hermes -n "$NS"
-kubectl -n "$NS" get pvc hermes 2>/dev/null \
-  && { say "PVC survived uninstall — not the empty-volume case"; exit 1; } \
-  || receipt "uninstall deleted the release AND its PVC"
+# CI receipt (run #11): uninstall returns while the PVC is still Terminating —
+# an immediate get reads it as "survived". Poll until the object is gone.
+say "waiting for the PVC to finish terminating (async deletion)..."
+pvc_gone=""
+for _ in $(seq 1 60); do
+  if ! kubectl -n "$NS" get pvc hermes >/dev/null 2>&1; then pvc_gone=1; break; fi
+  sleep 2
+done
+if [ "$pvc_gone" = "1" ]; then
+  receipt "uninstall deleted the release AND its PVC"
+else
+  kubectl -n "$NS" get pvc
+  say "PVC still present after 120s — not the empty-volume case"
+  exit 1
+fi
 helm install hermes k8s/chart/hermes-agent -n "$NS" \
   --set fullnameOverride=hermes --set apiServer.key="$KEY"
 kubectl -n "$NS" rollout status deploy/hermes --timeout=360s
