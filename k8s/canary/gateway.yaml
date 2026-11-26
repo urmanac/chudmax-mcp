@@ -12,8 +12,11 @@ metadata:
 spec:
   gatewayClassName: traefik
   listeners:
+    # Traefik chart 43.0.0's unprivileged `web` entrypoint listens on :8000 in
+    # the container (matching its own templates/gateway.yaml), while the
+    # `traefik` Service exposes port 80 -> targetPort `web` (:8000).
     - name: http
-      port: 80
+      port: 8000
       protocol: HTTP
       allowedRoutes:
         namespaces:

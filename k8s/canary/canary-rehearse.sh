@@ -45,7 +45,7 @@ METRICS_SERVER=${CANARY_METRICS_SERVER:-http://flagger-prometheus.flagger:9090}
 FLAGGER_CHART=1.45.0
 LOADTESTER_CHART=0.39.0
 TRAEFIK_CHART=43.0.0
-GATEWAY_API_REF=v1.4.0
+GATEWAY_API_REF=v1.7.0
 CILIUM_VER=v1.18.1
 FLUX_VER=v2.10.1
 GIT_SRV_PID=
@@ -83,6 +83,7 @@ annotate_failure() {
   annotate flagger-controller "$LOGS/flagger.log"
   annotate loadtester "$LOGS/loadtester.log"
   annotate web-pods "$LOGS/web.log"
+  annotate mcp-pods "$LOGS/mcp.log"
   annotate traefik "$LOGS/traefik.log"
   annotate weight-timeline "$LOGS/weight-timeline.log"
   sleep 1   # let the tee drain before the shell exits
@@ -100,7 +101,8 @@ cleanup() {
     kubectl get events -A --sort-by=.lastTimestamp > "$LOGS/events-all.txt" 2>/dev/null || true
     kubectl -n flagger logs deploy/flagger > "$LOGS/flagger.log" 2>/dev/null || true
     kubectl -n "$NS" logs deploy/loadtester --all-containers > "$LOGS/loadtester.log" 2>/dev/null || true
-    kubectl -n "$NS" logs -l app.kubernetes.io/name=chudmax-web --all-containers > "$LOGS/web.log" 2>/dev/null || true
+    kubectl -n "$NS" logs -l app.kubernetes.io/name=web --all-containers > "$LOGS/web.log" 2>/dev/null || true
+    kubectl -n "$NS" logs -l app.kubernetes.io/name=mcp --all-containers > "$LOGS/mcp.log" 2>/dev/null || true
     kubectl -n "$NS" logs deploy/traefik > "$LOGS/traefik.log" 2>/dev/null || true
     annotate_failure
   fi
@@ -222,14 +224,13 @@ helm repo update traefik >/dev/null 2>&1
 # - metrics.prometheus is ON by default at the "metrics" entryPoint — the web
 #   pods' scrape annotations are set by the chart wiring, Traefik's here (the
 #   traefik_service_* receipt leg; bonus, not load-bearing)
-# - ports.web.port: the chart's web entrypoint listens on 8000 by default and
-#   Traefik REQUIRES Gateway listener ports to match entrypoint ports — pin it
-#   to 80 so the Gateway's :80 listener matches (the Service still exposes 80).
+# - the chart's unprivileged `web` entrypoint listens on :8000 (matching
+#   gateway.yaml's listener port 8000), while the Service exposes port 80 ->
+#   targetPort `web`.
 helm upgrade --install traefik traefik/traefik -n "$NS" --create-namespace \
   --version "$TRAEFIK_CHART" \
   --set providers.kubernetesGateway.enabled=true \
   --set gateway.enabled=false \
-  --set ports.web.port=80 \
   --set 'deployment.podAnnotations.prometheus\.io/scrape=true' \
   --set 'deployment.podAnnotations.prometheus\.io/port=9100' \
   --set 'deployment.podAnnotations.prometheus\.io/path=/metrics' \
@@ -269,8 +270,12 @@ apply_test_manifests() {
   sed "s|__RUNNER_HTTP__|${GW}:${GIT_PORT}|" "$REPO/k8s/rehearsal/gitrepository-test.yaml" | kubectl -n "$NS" apply -f - >/dev/null
   kubectl -n "$NS" apply -f "$REPO/k8s/repo-sync/artifactgenerator.yaml" >/dev/null
   # The policy lands in flux-system (a NetworkPolicy only selects pods in its
-  # OWN namespace — the phase-5 lesson); only the from-selector is rewritten.
-  sed 's|chudmax-releases|'"$NS"'|' "$REPO/k8s/repo-sync/artifact-ingress.yaml" | kubectl -n flux-system apply -f - >/dev/null
+  # OWN namespace — the phase-5 lesson); rewrite the release namespace AND the
+  # pod name label (`alias: mcp` in the umbrella sets app.kubernetes.io/name: mcp,
+  # whereas standalone chudmax-mcp sets chudmax-mcp).
+  sed -e 's|chudmax-releases|'"$NS"'|' \
+      -e 's|app.kubernetes.io/name: chudmax-mcp|app.kubernetes.io/name: mcp|' \
+      "$REPO/k8s/repo-sync/artifact-ingress.yaml" | kubectl -n flux-system apply -f - >/dev/null
 }
 note "the artifact chain: the test manifests + the seed push (the ready-gated mcp Service path)"
 rm -rf "$WT"; git init -q -b main "$WT"
@@ -300,13 +305,15 @@ kubectl -n "$NS" get endpoints chudmax-mcp -o jsonpath='{.subsets[0].addresses[0
   || fail "the mcp Service has no endpoints"
 receipt "mcp pod Ready, chudmax-mcp:8080 serving (the ready-gated Service path proven)"
 mcp_list() { # one-shot canonical JSON-RPC tools/call through the Service
-  kubectl -n "$NS" run "mcpq-$$-$RANDOM" --restart=Never --image="$CURL_IMAGE" -q \
+  local p="mcpq-$$-$RANDOM"
+  kubectl -n "$NS" run "$p" --restart=Never --image="$CURL_IMAGE" -q \
     --overrides '{"spec":{"automountServiceAccountToken":false}}' \
-    --command -- sh -c "sleep 3; curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+    --command -- sh -c "sleep 2; curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
     -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"list_tickets\",\"arguments\":{}}}' \
     http://chudmax-mcp.$NS.svc:8080/mcp; sleep 1" >/dev/null 2>&1
   sleep 6
-  kubectl -n "$NS" logs $(kubectl -n "$NS" get pod -o name | grep mcpq | tail -1) 2>/dev/null | grep -v '^$' | head -5 || true
+  kubectl -n "$NS" logs "$p" 2>/dev/null | grep -v '^$' | head -5 || true
+  kubectl -n "$NS" delete pod "$p" --force --grace-period=0 >/dev/null 2>&1 || true
 }
 TICKET=""
 for _ in $(seq 1 12); do
@@ -403,7 +410,7 @@ for _ in $(seq 1 45); do
   sleep 20
 done
 [ -n "$GOOD_OK" ] || fail "the good upgrade never promoted in 15m (last phase: ${GOOD_PHASE:-none})"
-STEPS=$(grep -oE 'chudmax-web-canary=[0-9]+' "$LOGS/weight-timeline.log" | sort -u | tr '\n' ' ')
+STEPS=$(grep -oE 'chudmax-web-canary=[0-9]+' "$LOGS/weight-timeline.log" | sort -u | tr '\n' ' ' || true)
 receipt "weight timeline steps: $STEPS (10% at a time to 50%)"
 PRIMARY_IMG=$(kubectl -n "$NS" get deploy chudmax-web-primary -o jsonpath='{.spec.template.spec.containers[0].image}')
 case "$PRIMARY_IMG" in *:0.1.1) ;; *) fail "promotion incomplete: the primary's image is $PRIMARY_IMG" ;; esac
@@ -420,7 +427,7 @@ E2E=$(promq 'count(vllm:e2e_request_latency_seconds_bucket{kubernetes_namespace=
   || fail "the e2e histogram instant-query returned no series ($E2E)"
 receipt "metric receipt: vllm:e2e_request_latency_seconds_bucket series present ($E2E)"
 TSVC=$(curl -s http://127.0.0.1:19090/api/v1/query --data-urlencode 'query={__name__="traefik_service_requests_total"}' \
-  | jq -r '[.data.result[].metric.service] | unique | .[]' 2>/dev/null | grep -E 'canary|primary' | tr '\n' ' ')
+  | jq -r '[.data.result[].metric.service] | unique | .[]' 2>/dev/null | grep -E 'canary|primary' | tr '\n' ' ' || true)
 if [ -n "$TSVC" ]; then
   receipt "metric receipt: Traefik's per-service metrics see: $TSVC (the clean-split labels)"
 else
@@ -430,7 +437,7 @@ fi
 # -------------------------------------------------------- the BROKEN upgrade
 note "the BROKEN upgrade: ONE combined JSON patch (image 0.1.1-broken + the dead-URL hub config) = one Flagger revision"
 ARGS_JSON=$(kubectl -n "$NS" get deploy chudmax-web -o jsonpath='{.spec.template.spec.containers[0].args}')
-PATCH_IDX=$(jq -r --json "$ARGS_JSON" 'to_entries[] | select(.value == "--mcp-config") | .key + 1' 2>/dev/null | head -1)
+PATCH_IDX=$(printf '%s\n' "$ARGS_JSON" | jq -r 'to_entries[] | select(.value == "--mcp-config") | .key + 1' 2>/dev/null | head -1 || true)
 [ -n "$PATCH_IDX" ] || fail "could not derive the --mcp-config args index from the rendered template"
 cat > "$LOGS/broken-patch.json" <<EOF
 [

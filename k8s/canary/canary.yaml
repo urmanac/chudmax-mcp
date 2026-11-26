@@ -105,6 +105,7 @@ spec:
             done
             echo "pre-rollout suite: PASS (health, tool equality, chat, 7 selftest questions)"
       - name: load-test
+        type: rollout
         url: http://loadtester.chudmax/
         timeout: 5s
         metadata:

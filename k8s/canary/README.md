@@ -15,7 +15,10 @@ helix-specs task dir (`design/tasks/000899_chudmax-k8s-phase-7/`).
 - the umbrella installed with `values-rehearsal.yaml`: engine OFF (both
   versions run the in-process mock), the chart Service OFF (Flagger generates
   its own), the hub wiring ON (`web.mcpConfig` → `http://chudmax-mcp:8080/mcp`),
-  the scrape annotations ON (Strata's native `/metrics?format=prometheus`)
+  the scrape annotations ON (`prometheus.io/path: "/metrics"`, negotiated via
+  Prometheus's `Accept: application/openmetrics-text` / `text/plain` header);
+  note that `artifact-ingress.yaml` also rewrites `app.kubernetes.io/name` to
+  `mcp` because the umbrella aliases the `chudmax-mcp` subchart as `mcp`
 - **Traefik** as the Gateway API controller (ADR 001, production parity:
   `providers.kubernetesGateway.enabled=true`, metrics on :9100); the Gateway
   `chudmax-gateway` (`gatewayClassName: traefik`) is dialed IN-CLUSTER only —
@@ -87,10 +90,10 @@ pinned chart source: `providers.kubernetesGateway.enabled`; `gatewayClass.enable
 true` default auto-creates the `traefik` GatewayClass — asserted, applied here
 only if missing; `gateway.enabled: true` default deploys an unwanted default
 Gateway — disabled; `metrics.prometheus` is ON by default at the `metrics`
-entryPoint) · **`ports.web.port=80`** (the chart's `web` entrypoint listens on
-8000 by default and Traefik's Gateway controller REQUIRES listener ports to
-match entrypoint ports — the rehearsal pins the entrypoint to 80 so the
-Gateway's :80 listener matches) · Gateway API CRDs v1.4.0 · the web image = the
+entryPoint; the unprivileged `web` entrypoint listens on `:8000`, matched by
+`gateway.yaml`'s listener `port: 8000`, while the `traefik` Service exposes
+`:80` → `targetPort: web`) · Gateway API CRDs v1.7.0 (`v1.TLSRoute` +
+`v1.TCPRoute` served, as required by Traefik v3.8.0) · the web image = the
 phase-6 build at the umbrella README's pinned SHA (`de34ebaa…`, tag
 `v0.2.21-mbp.rtx.1`).
 
