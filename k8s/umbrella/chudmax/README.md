@@ -41,14 +41,21 @@ The children are named deterministically (`chudmax-engine`, `chudmax-web`,
 2. the web pod answering `/health` through its Service (the curl's Host header
    is the Service DNS name — Strata's DNS-rebinding guard and its
    `STRATA_ALLOWED_HOSTS` auto default are thereby proven);
-3. the mcp pod: Running; the server answering HTTP 200 (`initialize`) over its
-   Service with the honest no-data body; the fetcher's logs showing the
-   apiserver **404 NotFound** ("does not exist yet, waiting") — with kindnet
-   enforcing NetworkPolicy, a *blocked* fetcher and a *waiting* one look
-   identical on pod status; the 404 in the logs is what proves the egress rule
-   let it reach kube-apiserver;
+3. the mcp pod: Running; the server answering HTTP 200 (`initialize`) on its
+   POD port (the Service admits only READY pods and the fetcher sidecar is
+   not-ready pre-artifact **by design** — the Service's empty endpoint set is
+   recorded as the honest receipt); the fetcher's logs showing the apiserver
+   **404 NotFound** ("does not exist yet, waiting") — with kindnet enforcing
+   NetworkPolicy, a *blocked* fetcher and a *waiting* one look identical on
+   pod status; the 404 in the logs is what proves the egress rule let it reach
+   kube-apiserver. The rehearsal ships a **minimal ExternalArtifact CRD as a
+   mapping fixture** (no Flux controller — phase 5's rehearsal owns the real
+   artifact flow); without a served mapping the fetcher's client fails at
+   discovery instead of answering 404;
 4. **no Cilium CRDs** rendered/installed with the chart defaults on stock kind
-   (phase 5's `apiServer.mode: auto` gate passes cleanly).
+   (phase 5's `apiServer.mode: auto` gate passes cleanly) — asserted on the
+   CRD shape, not the word (the mcp chart's egress template explains Cilium in
+   comments that render verbatim);
 
 NOT proven here: the commit→tickets data path (phase 5's rehearsal owns it).
 

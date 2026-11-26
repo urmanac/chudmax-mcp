@@ -59,6 +59,35 @@ kind create cluster --name "$CLUSTER" --wait 240s >/dev/null
 kubectl config current-context | grep -q "kind-$CLUSTER" || die "the kind context is not current"
 kubectl create namespace "$NS" >/dev/null 2>&1 || true   # the step-5 probes target it before helm creates it
 
+say "1b. the ExternalArtifact CRD - a minimal mapping fixture (the rehearsal runs no Flux)"
+# The fetcher's client resolves the resource mapping before its first Get; the
+# rehearsal installs charts, not Flux (phase 5's rehearsal owns the controller),
+# so the smoke ships the minimal CRD. The fetcher's Get then answers the
+# apiserver's 404 NotFound - the round-trip the fetcher-log assertion reads.
+kubectl apply -f - <<'EOF' >/dev/null
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: externalartifacts.source.toolkit.fluxcd.io
+spec:
+  group: source.toolkit.fluxcd.io
+  names:
+    kind: ExternalArtifact
+    listKind: ExternalArtifactList
+    plural: externalartifacts
+    singular: externalartifact
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+EOF
+echo "  the mapping fixture applied ✓"
+
 say "2. Strata at the pin ($STRATA_PIN)"
 git init -q "$WORK/strata"
 git -C "$WORK/strata" fetch -q --depth 1 "$STRATA_REPO" "$STRATA_PIN"
@@ -304,6 +333,9 @@ echo "  kind: $(kind version | cut -d' ' -f2) (docker provider)   helm: $(helm v
 echo "  images loaded: $WEB_IMAGE $FETCHER_IMAGE $SERVER_IMAGE (amd64; no registry)"
 echo "  engine endpoint: $ENGINE_HOST:8080 (route: $EN_ROUTE)"
 echo "  policy rung: $RUNG"
+echo "  fetcher: the ExternalArtifact mapping fixture (a minimal CRD, no Flux"
+echo "  controller) makes the apiserver's 404 the round-trip proof - the phase-5"
+echo "  rehearsal owns the real artifact flow"
 echo "  hooks: engine /health via the Service = PASS; web /health via the Service = PASS"
 echo "  mcp: server 200 (initialize) on the POD port; the Service's endpoint set is"
 echo "  empty pre-artifact by design (the fetcher's ready-gate) - the ready-gated"
