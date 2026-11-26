@@ -210,8 +210,14 @@ class Tickets:
             return str(self.data_root / "current")
         return str(self.tickets_path)
 
-    def readable(self) -> list[Path]:
-        base = self.base()
+    def readable(self, base: "Path | None" = None) -> list[Path]:
+        """The readable set over ONE resolved snapshot. Every docs call binds
+        base = self.base() ONCE at its start and threads it through here and its
+        own loops — a symlink swap mid-call can no longer split one call across
+        two trees (which made relative_to raise an unhandled ValueError or
+        falsely refuse — the same one-snapshot rule repo_facts follows)."""
+        if base is None:
+            base = self.base()
         files = [base / name for name in READABLE_TOP if (base / name).is_file()]
         for d in READABLE_DIRS:
             if (base / d).is_dir():
@@ -355,12 +361,13 @@ class Tickets:
         return out
 
     def list_docs(self) -> str:
-        docs = self.readable()
+        base = self.base()  # ONE snapshot for the whole call
+        docs = self.readable(base)
         if not docs:
             return "no readable docs under docs/, decisions/, plans/"
         lines = []
         for p in docs:
-            rel = p.relative_to(self.base())
+            rel = p.relative_to(base)
             try:
                 size = p.stat().st_size
             except OSError:
@@ -377,10 +384,11 @@ class Tickets:
         return "\n".join(lines)
 
     def read_doc(self, name: str, max_chars: int = DOC_MAX_DEFAULT) -> str:
-        cand = (self.base() / name).resolve()
-        allowed = {str(p.relative_to(self.base())) for p in self.readable()}
+        base = self.base()  # ONE snapshot for the whole call
+        cand = (base / name).resolve()
+        allowed = {str(p.relative_to(base)) for p in self.readable(base)}
         try:
-            rel = str(cand.relative_to(self.base()))
+            rel = str(cand.relative_to(base))
         except ValueError:
             return f"refused: {name} is outside the repo"
         if rel not in allowed:
@@ -396,10 +404,11 @@ class Tickets:
         return body
 
     def search_docs(self, query: str, max_hits: int = 12) -> str:
+        base = self.base()  # ONE snapshot for the whole call
         q = query.lower()
         hits = []
-        for p in self.readable():
-            rel = p.relative_to(self.base())
+        for p in self.readable(base):
+            rel = p.relative_to(base)
             try:
                 for i, line in enumerate(p.read_text(errors="replace").splitlines(), 1):
                     if q in line.lower():

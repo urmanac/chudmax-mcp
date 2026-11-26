@@ -88,6 +88,33 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.server.port }}
+          # The MCP surface must be alive, not just the process: the probe
+          # POSTs list_tickets and asserts HTTP 200 (GET /mcp is a 405). It
+          # reads the bearer token file WHEN PRESENT (auth on: the header is
+          # sent — a headerless POST would 401; auth off: the read fails and
+          # the header is skipped), so one static command covers both variants.
+          readinessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - |
+                  import json, sys, urllib.request
+                  headers = {"Content-Type": "application/json"}
+                  try:  # bearer auth (the mounted token, read per probe)
+                      headers["Authorization"] = "Bearer " + open("/var/run/mcp-auth/token").read().strip()
+                  except OSError:
+                      pass
+                  req = urllib.request.Request(
+                      "http://127.0.0.1:{{ .Values.server.port }}/mcp",
+                      data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                       "params": {"name": "list_tickets", "arguments": {}}}).encode(),
+                      headers=headers)
+                  try:
+                      r = urllib.request.urlopen(req, timeout=3)
+                      sys.exit(0 if r.status == 200 else 1)
+                  except Exception:
+                      sys.exit(1)
           volumeMounts:
             - name: data
               mountPath: {{ .Values.fetcher.root }}

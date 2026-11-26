@@ -47,4 +47,5 @@ with other egress needs adjusts networkPolicy.egress.extra or disables the
 policies. The kube-apiserver egress rule defaults to the apiserver's static
 pods by label (Cilium-compatible; set networkPolicy.egress.apiServer.mode=cidr
 for the service-CIDR ipBlock alternative), and the artifact-server rule points
-at source-watcher's storage pods (port {{ .Values.networkPolicy.egress.sourceController.port }}).
+at source-watcher's storage pods (port {{ .Values.networkPolicy.egress.sourceController.port }};
+the ExternalArtifact URL dials the Service on 80 — policies match the backend 9090).

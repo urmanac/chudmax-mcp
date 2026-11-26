@@ -295,6 +295,104 @@ def pod_checks(checks: list) -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+def docs_swap_checks(checks: list) -> None:
+    """T-0037 phase 5: the docs methods bind ONE base per call (the review's finding -
+    repo_facts was the only fully bind-once method). A symlink swap CONCURRENT with
+    list_docs/read_doc/search_docs must never split one call across two trees: no crash,
+    no 5xx, no false refusal, every answer one whole revision's content."""
+    import shutil
+    import tempfile
+    import threading
+    import time
+    import urllib.error
+    import urllib.request
+
+    tag1, tag2 = "d" * 12, "e" * 12
+    root = Path(tempfile.mkdtemp(prefix="selftest-docsswap-"))
+    for tag in (tag1, tag2):
+        d = root / "revisions" / tag
+        (d / "docs").mkdir(parents=True)
+        (d / "decisions").mkdir()
+        (d / "tickets.md").write_text(f"## T-9001 - Example: the docs swap fixture\n\nthe {tag} revision's tickets\n")
+        (d / "docs" / "note.md").write_text(f"# a mock doc\nthe {tag} revision's doc\n")
+        (d / "decisions" / "0001-swap.md").write_text(f"# a mock decision\nthe {tag} revision's decision\n")
+    (root / "current").symlink_to(Path("revisions") / tag1)
+
+    proc = subprocess.Popen(
+        [sys.executable, str(SERVER), "--http", "0", "--data-root", str(root)],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        m = re.match(r"listening on (\S+):(\d+)$", proc.stdout.readline().strip())
+        if m is None:
+            checks.append(("docs-swap server announces its port", False, "no port line"))
+            return
+        url = f"http://{m.group(1)}:{m.group(2)}/mcp"
+
+        def text_of(body: str) -> str:
+            content = json.loads(body).get("result", {}).get("content", [])
+            return "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
+
+        def call(tool: str, args: dict | None = None):
+            body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                               "params": {"name": tool, "arguments": args or {}}})
+            req = urllib.request.Request(url, data=body.encode(), method="POST",
+                                         headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    return r.status, text_of(r.read().decode())
+            except urllib.error.HTTPError as e:
+                return e.code, e.read().decode()
+
+        stop = threading.Event()
+
+        def swapper():
+            cur = root / "current"
+            tmp = root / ".swap.tmp"
+            which = tag1
+            while not stop.is_set():
+                tmp.symlink_to(Path("revisions") / which)
+                os.replace(tmp, cur)  # the fetcher's rename(2), as fast as it goes
+                which = tag2 if which == tag1 else tag1
+                time.sleep(0.005)
+
+        swapper_thread = threading.Thread(target=swapper, daemon=True)
+        swapper_thread.start()
+        crashes = refusals = not_one_tree = total = 0
+        for _ in range(60):
+            for tool, args, marker in (("list_docs", {}, None),
+                                       ("read_doc", {"name": "docs/note.md"}, "revision's doc"),
+                                       ("read_doc", {"name": "decisions/0001-swap.md"}, "revision's decision"),
+                                       ("search_docs", {"query": "revision"}, None)):
+                total += 1
+                try:
+                    status, body = call(tool, args)
+                except Exception:
+                    crashes += 1
+                    continue
+                if status != 200 or "Traceback" in body or "ValueError" in body:
+                    crashes += 1
+                if tool == "read_doc" and "refused" in body:
+                    refusals += 1
+                if marker is not None and f"the {tag1} {marker}" not in body \
+                        and f"the {tag2} {marker}" not in body:
+                    not_one_tree += 1
+        stop.set()
+        swapper_thread.join(timeout=5)
+        checks.append(("docs under a concurrent swap: no crash, no 5xx, no split call",
+                       crashes == 0 and total == 240, f"{crashes} bad of {total} calls"))
+        checks.append(("docs under a concurrent swap: no false refusals",
+                       refusals == 0, f"{refusals} refusals"))
+        checks.append(("docs under a concurrent swap: every read is one whole revision",
+                       not_one_tree == 0, f"{not_one_tree} answers matched neither revision"))
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def relative_launch_checks(checks: list) -> None:
     """The .pi/mcp.json launch shape, locked forever: cwd = the repo root, a RELATIVE
     --tickets tickets.md - exactly how pi launches this server. Fable's regression: the
@@ -475,6 +573,7 @@ def main() -> int:
 
     http_checks(checks)
     pod_checks(checks)
+    docs_swap_checks(checks)
     relative_launch_checks(checks)
     bearer_checks(checks)
 
