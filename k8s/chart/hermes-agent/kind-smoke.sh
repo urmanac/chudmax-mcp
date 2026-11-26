@@ -186,12 +186,18 @@ hexec deploy/hermes -- hermes config set model.base_url http://chudmax-engine:80
 # the unqualified host here (chudmax-engine, no dots) is local by definition — so
 # max(32,768, 65,536) clears the floor. Rides in the backup: present after restore.
 hexec deploy/hermes -- hermes config set model.ollama_num_ctx 65536
+# Second 64K guard, same model id: the auxiliary compression model defaults to the
+# main model and (same model, same route) inherits the compressor's 32,768 window
+# (check_compression_model_feasibility, conversation_compression.py). The config
+# override short-circuits detection — get_model_context_length returns a positive
+# config_context_length before any catalog lookup. Also rides in the backup.
+hexec deploy/hermes -- hermes config set auxiliary.compression.context_length 65536
 hexec deploy/hermes -- hermes config set model.api_key none
 hexec deploy/hermes -- \
   sh -c "printf '%s\n' '${MARKER}' >> /opt/data/SOUL.md"
 grep -q "$MARKER" \
   <(hexec deploy/hermes -- cat /opt/data/SOUL.md)
-receipt "seeded: provider config (5 config keys) + the SOUL.md marker"
+receipt "seeded: provider config (6 config keys) + the SOUL.md marker"
 kubectl -n "$NS" rollout status deploy/hermes --timeout=360s
 receipt "hermes pod ready (startup probe through s6 stage2 passed)"
 helm test hermes -n "$NS"
