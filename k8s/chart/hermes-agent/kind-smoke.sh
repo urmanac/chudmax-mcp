@@ -34,13 +34,13 @@ KEY="phase9-kind-rehearsal-key-not-a-secret"
 HERMES_IMAGE="nousresearch/hermes-agent:v0.23.4"
 STRATA_PIN="de34ebaa521d8f628b4bb1884e5c34101730299a"
 MARKER="phase9-restore-proof-marker"
-KEY_DESC="rehearsal-only non-secret test key"
 
 say() { echo "[phase9-smoke] $*"; }
 receipt() { say "RECEIPT: $*"; }
 
 hermes_pod() {
   kubectl -n "$NS" get pod -l app.kubernetes.io/name=hermes-agent \
+    --field-selector=status.phase=Running \
     -o jsonpath='{.items[0].metadata.name}'
 }
 
@@ -125,7 +125,7 @@ receipt "helm test hook: /health 200 + bearer /v1/models 200 through the Service
 helm test engine -n "$NS"
 receipt "engine pointer hook: /health through the Service -> the bridge mock 200"
 
-# ---------- 5. backup the whole agent, copy the zip to the runner ----------
+# ---------- 4. backup the whole agent, copy the zip to the runner ----------
 POD=$(hermes_pod)
 kubectl -n "$NS" exec "$POD" -- hermes backup -o /tmp/agent.zip
 kubectl cp "${NS}/${POD}:/tmp/agent.zip" /tmp/agent.zip
@@ -133,7 +133,7 @@ say "backup zip: $(stat -c%s /tmp/agent.zip) bytes"
 [ -s /tmp/agent.zip ]
 receipt "hermes backup captured the home and reached the runner"
 
-# ---------- 6. pod delete: the PVC survives ----------
+# ---------- 5. pod delete: the PVC survives ----------
 kubectl -n "$NS" delete pod "$POD"
 kubectl -n "$NS" rollout status deploy/hermes --timeout=360s
 POD2=$(hermes_pod); [ "$POD2" != "$POD" ] || say "note: same pod name returned (statefulset-like naming)"
@@ -142,7 +142,7 @@ BASE_URL_READBACK=$(kubectl -n "$NS" exec "$POD2" -- hermes config get model.bas
 say "config readback after pod delete: model.base_url=${BASE_URL_READBACK}"
 receipt "pod delete survived: marker + provider config on the same PVC (new pod ${POD2})"
 
-# ---------- 7. restore onto an EMPTY volume ----------
+# ---------- 6. restore onto an EMPTY volume ----------
 VOL_BEFORE=$(kubectl -n "$NS" get pvc hermes -o jsonpath='{.spec.volumeName}')
 kubectl -n "$NS" get pvc hermes
 helm uninstall hermes -n "$NS"
@@ -171,7 +171,7 @@ say "config readback after restore: model.base_url=${BASE_URL_RESTORED}"
 [ "$BASE_URL_RESTORED" = "$BASE_URL_READBACK" ]
 receipt "restore onto the empty volume: marker + provider config back (hermes import)"
 
-# ---------- 8. chat through the Service -> the mock engine's scripted turn ----------
+# ---------- 7. chat through the Service -> the mock engine's scripted turn ----------
 say "chat completion through the hermes Service (port-forward)..."
 kubectl -n "$NS" port-forward svc/hermes 18642:8642 >/tmp/pf.log 2>&1 &
 PF=$!
@@ -196,7 +196,7 @@ echo "$CHAT_OK" | grep -q "Hello from the mock engine" \
   || { say "chat failed; hermes logs:"; kubectl -n "$NS" logs deploy/hermes --tail=80 || true; exit 1; }
 receipt "chat through the Service -> the mock engine's scripted turn"
 
-# ---------- 9. the mcp chart's ingress policy admits hermes (same namespace) ----------
+# ---------- 8. the mcp chart's ingress policy admits hermes (same namespace) ----------
 MCP_POD_IP=$(kubectl -n "$NS" get pod -l app.kubernetes.io/name=chudmax-mcp \
   -o jsonpath='{.items[0].status.podIP}')
 say "mcp pod IP: ${MCP_POD_IP} (the Service is endpoint-less pre-artifact — the phase-6 lesson)"
