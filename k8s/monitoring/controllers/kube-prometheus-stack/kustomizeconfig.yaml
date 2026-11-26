@@ -1,0 +1,9 @@
+# Maps the generated kube-state-metrics ConfigMap into the HelmRelease's
+# valuesFrom — upstream's monitoring/controllers/kube-prometheus-stack/kustomizeconfig.yaml,
+# unchanged (a URL is a name reference, not a credential).
+nameReference:
+  - kind: ConfigMap
+    version: v1
+    fieldSpecs:
+      - path: spec/valuesFrom/name
+        kind: HelmRelease

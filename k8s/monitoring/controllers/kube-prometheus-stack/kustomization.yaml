@@ -1,0 +1,20 @@
+# The kube-prometheus-stack install (the full-stack profile's only controller).
+# Upstream's monitoring/controllers/kube-prometheus-stack/ shape, minus its
+# namespace.yaml (the Namespace lives one level up in controllers/) and minus
+# the loki-stack sibling (omitted by design — no log pipeline in the contract).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - repository.yaml
+  - release.yaml
+configMapGenerator:
+  - name: flux-kube-state-metrics-config
+    files:
+      - kube-state-metrics-config.yaml
+    options:
+      labels:
+        app.kubernetes.io/part-of: chudmax
+        app.kubernetes.io/component: monitoring
+configurations:
+  - kustomizeconfig.yaml
