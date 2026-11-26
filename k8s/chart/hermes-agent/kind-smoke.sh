@@ -180,12 +180,18 @@ say "seeding model-provider config + the SOUL.md marker (real agent state)..."
 hexec deploy/hermes -- hermes config set model.provider custom
 hexec deploy/hermes -- hermes config set model.model mock
 hexec deploy/hermes -- hermes config set model.base_url http://chudmax-engine:8080/v1
+# The mock advertises model id anthropic/claude-opus-4.6, whose registry window is
+# 32,768 — below hermes' 64,000 floor (_enforce_minimum_context, agent_init.py).
+# model.ollama_num_ctx is the upstream-sanctioned override for LOCAL servers, and
+# the unqualified host here (chudmax-engine, no dots) is local by definition — so
+# max(32,768, 65,536) clears the floor. Rides in the backup: present after restore.
+hexec deploy/hermes -- hermes config set model.ollama_num_ctx 65536
 hexec deploy/hermes -- hermes config set model.api_key none
 hexec deploy/hermes -- \
   sh -c "printf '%s\n' '${MARKER}' >> /opt/data/SOUL.md"
 grep -q "$MARKER" \
   <(hexec deploy/hermes -- cat /opt/data/SOUL.md)
-receipt "seeded: provider config (4 config keys) + the SOUL.md marker"
+receipt "seeded: provider config (5 config keys) + the SOUL.md marker"
 kubectl -n "$NS" rollout status deploy/hermes --timeout=360s
 receipt "hermes pod ready (startup probe through s6 stage2 passed)"
 helm test hermes -n "$NS"

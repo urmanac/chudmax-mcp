@@ -134,6 +134,13 @@ provisioners hand the pod an empty dir and stage2 chowns it at boot. To match
 a specific owner, pass `extraEnv` entries `HERMES_UID` / `HERMES_GID` (the
 stage2 remap runs before services start).
 
+**64K context floor:** hermes rejects any model whose window is under 64,000
+tokens (`_enforce_minimum_context`). Against a small local server, set
+`hermes config set model.ollama_num_ctx 65536` — the upstream-sanctioned
+override, applied only when the base_url host is local (loopback, unqualified
+host, RFC-1918). The kind rehearsal needs it: the mock advertises a model id
+whose registry window is 32,768.
+
 ## Why not the community chart?
 
 It targets hermes-agent 0.8.0 (today's stable: 0.23.4) and ships no LICENSE —
