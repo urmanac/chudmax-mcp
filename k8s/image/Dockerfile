@@ -1,7 +1,7 @@
 # The chudmax fetcher image: the artifact sidecar only. The pod's MCP server
-# runs in its own container (the chart's default is the bundled mock,
-# k8s/tickets-mcp-mock/ — bring your own by overriding values); nothing else
-# belongs in this image.
+# runs in its own container (the chart's default is the published canonical
+# ticket server, k8s/tickets-mcp/ — bring your own by overriding values);
+# nothing else belongs in this image.
 #
 # Build context is k8s/ (not the repo root):
 #

@@ -1,0 +1,50 @@
+# Ingress allowance for the artifact store: source-watcher's storage server
+# (default :9090) serves the generated ExternalArtifact the fetcher downloads.
+# Flux's own shipped policies (`flux install --network-policy`, on by default)
+# admit cross-namespace ingress to the toolkit controllers only on :8080
+# (allow-scraping) and the notification webhook :9292 — WITHOUT this file a
+# fetcher in any other namespace cannot reach the artifact and the pod waits
+# forever. Rules are additive across policies selecting the pod, so this file
+# only opens the artifact port to the chart's pods.
+#
+# EDIT BEFORE APPLYING: `chudmax-releases` below is the namespace the
+# chudmax-mcp chart release is installed into — replace it with yours (the
+# phase-5 rehearsal substitutes its own at apply time). The podSelector
+# matches the chart's pods by name label; tighten with the instance label if
+# several releases share the namespace.
+#
+# PHASE-12 PREREQUISITE: this rule lives in flux-system, so the installer
+# needs write access there — or the platform team carries the equivalent rule
+# in their Flux install (the phase-12 inventory walks it).
+#
+# Out of scope here: the artifact itself is unauthenticated in-cluster HTTP
+# once this port is reachable (mTLS is phase 17); the Receiver's webhook path
+# is a phase-12 decision and needs its own allowance.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: chudmax-artifact-ingress
+  # NOTE: unlike the other repo-sync manifests, this policy MUST live in
+  # flux-system (next to the source-watcher pods it selects) — a NetworkPolicy
+  # only selects pods in its own namespace, so applying it to the release
+  # namespace selects NOTHING and source-watcher stays behind Flux's shipped
+  # default-deny (the phase-5 rehearsal burned a run on exactly this). The
+  # namespace is pinned here so an install cannot repeat that mistake.
+  namespace: flux-system
+spec:
+  podSelector:
+    matchLabels:
+      app: source-watcher
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: chudmax-releases
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: chudmax-mcp
+      ports:
+        - protocol: TCP
+          port: 9090

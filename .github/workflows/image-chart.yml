@@ -1,8 +1,13 @@
 # The phase-4b CI re-proof: the chart lints and templates (now with the published
 # canonical ticket server in the default values), kubeconform validates the RENDERED
-# templates in both value variants (the check that would have caught F3 — proven by a
+# templates in the value variants (the check that would have caught F3 — proven by a
 # negative probe against the old broken shape), the fetcher image builds for
 # both architectures, and the published server gets its own test + image jobs.
+# Phase 5 (T-0037) added: the cilium render (apiServer.mode: cilium — the
+# CiliumNetworkPolicy has no public JSON-schema catalog, so the render is
+# validated with -ignore-missing-schemas + structural assertions, and the CNP is
+# applied FOR REAL by the phase-5 rehearsal cluster), and the auth-enabled render
+# (the bearer-aware readinessProbe).
 #
 # The image builds are emulation-free: the fetcher Dockerfile pins both
 # RUN-bearing stages to $BUILDPLATFORM and cross-compiles the Go binary; the
@@ -10,10 +15,10 @@
 # arm64 *runtime* smoke needs binfmt on the runner; it was proven off-CI (and
 # in-sandbox via host-side qemu) and stays out of this workflow.
 #
-# The chart renders only core Kubernetes kinds (Deployment, Service, RBAC,
-# NetworkPolicy), so kubeconform's default k8s schemas cover everything it
-# renders; the Flux-schema validation of the repo-sync manifests lives in
-# repo-sync-validate.yml.
+# The chart renders core Kubernetes kinds (Deployment, Service, RBAC,
+# NetworkPolicy) plus — only in the cilium render — a CiliumNetworkPolicy;
+# kubeconform's default k8s schemas cover the core kinds; the Flux-schema
+# validation of the repo-sync manifests lives in repo-sync-validate.yml.
 #
 # Fallback if podman-in-Actions ever frictions out: swap the image jobs to
 # docker buildx (docker/setup-buildx-action) — same Dockerfiles, same platforms.
@@ -48,13 +53,38 @@ jobs:
             --set server.command[0]=/bin/my-server \
             --set externalArtifact.name=my-artifact \
             --set server.port=9090
-      - name: kubeconform the rendered templates (both value variants)
+      - name: template (cilium render - the CiliumNetworkPolicy apiserver rule)
+        run: helm template rel k8s/chart/chudmax-mcp --set networkPolicy.egress.apiServer.mode=cilium > /tmp/rendered-cilium.yaml
+      - name: template (auth enabled - the bearer-aware readinessProbe)
+        run: helm template rel k8s/chart/chudmax-mcp --set server.auth.enabled=true --set server.auth.secretName=my-token > /tmp/rendered-auth.yaml
+      - name: kubeconform the rendered templates (the value variants)
         run: |
           curl -fsSL -o /tmp/kubeconform.tgz \
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
           tar -xf /tmp/kubeconform.tgz -C /tmp kubeconform
-          /tmp/kubeconform -strict -summary /tmp/rendered-defaults.yaml
-          /tmp/kubeconform -strict -summary /tmp/rendered-fetcheronly.yaml
+          for f in rendered-defaults rendered-fetcheronly rendered-auth; do
+            /tmp/kubeconform -strict -summary /tmp/$f.yaml
+          done
+          # The CiliumNetworkPolicy has no public JSON-schema catalog — its render
+          # is validated structurally below, and applied FOR REAL by the phase-5
+          # rehearsal cluster (the live receipt).
+          /tmp/kubeconform -strict -ignore-missing-schemas -summary /tmp/rendered-cilium.yaml
+      - name: the CiliumNetworkPolicy's structure (the render the schema catalog cannot check)
+        run: |
+          grep -q '^apiVersion: cilium.io/v2$' /tmp/rendered-cilium.yaml
+          grep -q '^kind: CiliumNetworkPolicy$' /tmp/rendered-cilium.yaml
+          grep -qE 'endpointSelector:' /tmp/rendered-cilium.yaml
+          grep -qE 'toEntities:' /tmp/rendered-cilium.yaml
+          grep -q 'kube-apiserver' /tmp/rendered-cilium.yaml
+      - name: the default render carries NO CiliumNetworkPolicy (auto resolves to the fallback without the CRDs — phase 6's stock-kind install)
+        run: |
+          # NB: NOT the inline `run: ! grep` form — a leading ! starts a YAML tag
+          # and the negation is silently eaten (the phase-5 CI incident).
+          if grep -q 'CiliumNetworkPolicy' /tmp/rendered-defaults.yaml; then
+            echo 'FAIL: the default render carries a CiliumNetworkPolicy — auto did not fall back'
+            exit 1
+          fi
+          echo 'OK: the default render is CNP-free (the ipBlock fallback)'
 
   image:
     runs-on: ubuntu-latest

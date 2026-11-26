@@ -1,0 +1,42 @@
+# The rehearsal's dummy alert sink: the Provider's address (from its Secret)
+# points at this Service, and the optional delivered-event assertion reads the
+# pod's logs (SINK-EVENT lines). Also the rehearsal's live check for the
+# eventSources question: if notification-controller matches
+# kind: ArtifactGenerator events, the sink log shows them; if not,
+# alerts.yaml gains ExternalArtifact and the README records the finding.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: alert-sink
+  labels:
+    app: alert-sink
+spec:
+  containers:
+    - name: sink
+      image: python:3.12-alpine
+      command: ["python3", "-c"]
+      args:
+        - |
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+          class S(BaseHTTPRequestHandler):
+              def do_POST(self):
+                  n = int(self.headers.get("Content-Length") or 0)
+                  body = self.rfile.read(n).decode(errors="replace")
+                  print("SINK-EVENT: " + body.replace("\n", " ")[:400], flush=True)
+                  self.send_response(200)
+                  self.send_header("Content-Length", "0")
+                  self.end_headers()
+              def log_message(self, *a):
+                  pass
+          HTTPServer(("0.0.0.0", 8080), S).serve_forever()
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-sink
+spec:
+  selector:
+    app: alert-sink
+  ports:
+    - port: 80
+      targetPort: 8080
