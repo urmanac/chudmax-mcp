@@ -5,15 +5,17 @@
 #   (the envsubst placeholders rendered with the rehearsal's in-cluster
 #   defaults), and the LAN-address hygiene grep.
 #
-#   kind — the authoritative run (kind needs rootful cgroups; the development
-#   sandbox cannot host it): `canary-rehearse.sh` end to end — kind + Cilium +
-#   Flux, the artifact chain, Traefik as the Gateway API controller (ADR 001),
-#   Flagger (meshProvider gatewayapi:v1) + its one-pod Prometheus + the
-#   loadtester, the GOOD upgrade promoted on real Strata metrics and the
-#   BROKEN upgrade caught by the pre-rollout webhook. LIVE STREAMING: the
-#   script's exec-tee emits every line to this job log as it happens and its
-#   receipts append to the run summary the moment they happen; the logs
-#   artifact is the sign-in-free diagnostic channel.
+#   kind — OPT-IN live Flagger canary demo (`workflow_dispatch` button on any
+#   branch/PR ref, OR apply the `run-canary-kind` label on any PR). Runs
+#   `canary-rehearse.sh` end to end — kind + Cilium + Flux, the artifact chain,
+#   Traefik as the Gateway API controller (ADR 001), Flagger (meshProvider
+#   gatewayapi:v1) + its one-pod Prometheus + the loadtester, the GOOD upgrade
+#   promoted on real Strata metrics and the BROKEN upgrade caught by the
+#   pre-rollout webhook. Skipped on routine PRs so every PR does not wait 23m
+#   for the Flagger weight ramp. LIVE STREAMING: the script's exec-tee emits
+#   every line to this job log as it happens and its receipts append to the run
+#   summary the moment they happen; the logs artifact is the sign-in-free
+#   diagnostic channel.
 #
 # Write set guard: this card owns k8s/canary/** + this file only. The
 # monitoring card's k8s/monitoring/** + monitoring-validate.yml and the Hermes
@@ -25,14 +27,19 @@
 name: canary-kind
 
 on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Optional branch, tag, or PR ref (e.g. refs/pull/10/head) to demo; defaults to the selected branch"
+        required: false
+        type: string
   pull_request:
-    paths:
-      - 'k8s/**'
-      - '.github/workflows/canary-kind.yml'
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
     paths:
-      - 'k8s/**'
+      - 'k8s/canary/**'
+      - 'k8s/umbrella/**'
       - '.github/workflows/canary-kind.yml'
 
 permissions:
@@ -43,6 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.4
@@ -75,10 +84,15 @@ jobs:
             k8s/canary .github/workflows/canary-kind.yml
 
   kind:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-canary-kind'))
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.4
