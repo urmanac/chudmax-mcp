@@ -111,7 +111,31 @@ wait_until() { # $1 desc, $2.. the readiness command
   fail "$desc not satisfied in 180s"
 }
 
-git_auth() { git -c http.extraHeader="Authorization: Basic ${AUTH_B64:?}" "$@"; }
+git_auth() { git -c http.sslCAInfo="$LOGS/ca.crt" -c http.extraHeader="Authorization: Basic ${AUTH_B64:?}" "$@"; }
+
+start_git_server() { # $1 optional extra SAN IP (e.g. kind bridge gateway)
+  local extra_ip="${1:-}" san="DNS:localhost,IP:127.0.0.1"
+  [ -n "$extra_ip" ] && san="${san},IP:${extra_ip}"
+  if [ -n "${GIT_SRV_PID:-}" ]; then
+    kill "$GIT_SRV_PID" 2>/dev/null || true
+    wait "$GIT_SRV_PID" 2>/dev/null || true
+    GIT_SRV_PID=""
+  fi
+  openssl req -newkey rsa:2048 -nodes \
+    -keyout "$LOGS/git.key" -out "$LOGS/git.csr" -subj "/CN=gittestserver" >/dev/null 2>&1
+  printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\n' "$san" > "$LOGS/git-ext.cnf"
+  openssl x509 -req -in "$LOGS/git.csr" -CA "$LOGS/ca.crt" -CAkey "$LOGS/ca.key" \
+    -CAcreateserial -out "$LOGS/git.crt" -days 1 -extfile "$LOGS/git-ext.cnf" >/dev/null 2>&1
+  "$LOGS/gittestserver" -root "$GIT_ROOT" -addr "0.0.0.0:$GIT_PORT" -auth "fluxbot:$PASS" \
+    -tls-cert "$LOGS/git.crt" -tls-key "$LOGS/git.key" >> "$LOGS/gitserver.log" 2>&1 &
+  GIT_SRV_PID=$!
+  for _ in $(seq 1 20); do
+    curl -fsS --connect-timeout 2 --max-time 5 --cacert "$LOGS/ca.crt" -o /dev/null \
+      -u "fluxbot:$PASS" "https://127.0.0.1:$GIT_PORT/repo.git/info/refs?service=git-upload-pack" && return 0
+    sleep 0.5
+  done
+  fail "the HTTPS git server never became ready: $(tail -5 "$LOGS/gitserver.log")"
+}
 
 # The phase-6 pbuild (the phase-9 copy): transient base-image pulls exit 125 —
 # retry, then die with the log.
@@ -145,10 +169,12 @@ export AUTH_B64
 rm -rf "$GIT_ROOT"; mkdir -p "$GIT_ROOT"
 REPO_GIT=$GIT_ROOT/repo.git
 
-# The seed work tree: the release-values miniature, then the bare repo by
-# CLONE (the hook rejects main pushes, so setup never pushes over HTTP).
+# The seed work tree: the release-values miniature (with the rehearsal
+# registry host substituted so beat 1's 0.1.0 scan matches the seeded lines
+# byte-for-byte), then the bare repo by CLONE (the hook rejects main pushes,
+# so setup never pushes over HTTPS).
 mkdir -p "$GIT_ROOT/seed/values"
-cp "$FIXTURES/values-fixture.yaml" "$GIT_ROOT/seed/values/images.yaml"
+sed "s|ghcr.io/|registry.$NS.svc:5000/|g" "$FIXTURES/values-fixture.yaml" > "$GIT_ROOT/seed/values/images.yaml"
 git -C "$GIT_ROOT/seed" init -q -b main
 git -C "$GIT_ROOT/seed" add -A
 git -C "$GIT_ROOT/seed" -c user.name="phase 8 seed" -c user.email="seed@chudmax.invalid" \
@@ -158,29 +184,24 @@ install -m 0755 "$FIXTURES/main-protect-hook.sh" "$REPO_GIT/hooks/pre-receive"
 MAIN_SHA=$(git --git-dir="$REPO_GIT" rev-parse refs/heads/main)
 receipt "seed repo at $REPO_GIT — main=$MAIN_SHA (the SHA that must never move)"
 
-"$LOGS/gittestserver" -root "$GIT_ROOT" -addr "0.0.0.0:$GIT_PORT" -auth "fluxbot:$PASS" \
-  > "$LOGS/gitserver.log" 2>&1 &
-GIT_SRV_PID=$!
-for _ in $(seq 1 20); do
-  curl -fsS -o /dev/null -u "fluxbot:$PASS" "http://127.0.0.1:$GIT_PORT/repo.git/info/refs?service=git-upload-pack" && break
-  sleep 0.5
-done
-curl -fsS -o /dev/null -u "fluxbot:$PASS" "http://127.0.0.1:$GIT_PORT/repo.git/info/refs?service=git-upload-pack" \
-  || fail "the git server never became ready: $(tail -3 "$LOGS/gitserver.log")"
-receipt "git server up on :$GIT_PORT with required basic auth (identity fluxbot)"
+openssl req -x509 -newkey rsa:2048 -days 1 -nodes \
+  -keyout "$LOGS/ca.key" -out "$LOGS/ca.crt" -subj "/CN=chudmax-rehearsal-ca" >/dev/null 2>&1
+: > "$LOGS/gitserver.log"
+start_git_server ""
+receipt "HTTPS git server up on :$GIT_PORT with ephemeral CA + required basic auth (identity fluxbot)"
 
 # The negative AUTH control: no credentials → 401. GIT_TERMINAL_PROMPT=0 is
 # exported for every git call, and set ON THE CHECK ITSELF: without it git
 # opens /dev/tty and hangs the non-interactive run waiting for a username
 # (the CI receipt of exactly that hang, killed after 90m on the terminal).
-if GIT_TERMINAL_PROMPT=0 git ls-remote "http://127.0.0.1:$GIT_PORT/repo.git" >/dev/null 2>&1; then
+if GIT_TERMINAL_PROMPT=0 git -c http.sslCAInfo="$LOGS/ca.crt" ls-remote "https://127.0.0.1:$GIT_PORT/repo.git" >/dev/null 2>&1; then
   fail "the git server accepted an UNAUTHENTICATED ls-remote — the credential story would be fake"
 fi
 receipt "the auth fence bites: an unauthenticated ls-remote is refused"
 
 note "pre-flight: the hook mechanics, runner-side, before anything is applied"
 rm -rf "$GIT_ROOT/control"
-git_auth clone -q "http://127.0.0.1:$GIT_PORT/repo.git" "$GIT_ROOT/control"
+git_auth clone -q "https://127.0.0.1:$GIT_PORT/repo.git" "$GIT_ROOT/control"
 git -C "$GIT_ROOT/control" -c user.name=control -c user.email=control@chudmax.invalid \
   commit -q --allow-empty -m "control: the review push"
 git_auth -C "$GIT_ROOT/control" push -q origin HEAD:refs/heads/review/image-updates
@@ -218,7 +239,8 @@ GW=$(docker network inspect kind | jq -r '.[0].IPAM.Config[] | select(.Gateway !
 [ -n "$GW" ] || fail "no IPv4 gateway on the kind network (gateways seen: $(docker network inspect kind -f '{{range .IPAM.Config}}{{.Gateway}} {{end}}'))"
 NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
 [ -n "$NODE_IP" ] || fail "no node InternalIP discovered"
-receipt "runner gateway $GW (the cluster's route to the test repo); node IP $NODE_IP (the runner's route to the registry)"
+start_git_server "$GW"
+receipt "runner gateway $GW (HTTPS git server re-signed with SAN IP:$GW); node IP $NODE_IP (the runner's route to the registry)"
 
 note "installing Flux with the image controllers (shipped policies on)"
 # NOTE: flux install has no --wait flag — waiting for the controllers is its
@@ -226,7 +248,7 @@ note "installing Flux with the image controllers (shipped policies on)"
 # workflow's flux2 action).
 flux install --components-extra=image-reflector-controller,image-automation-controller --namespace="$NS"
 wait_until "the flux deployments available" \
-  kubectl -n "$NS" wait --for=condition=available deployment --all --timeout=150s
+  kubectl -n "$NS" wait --for=condition=available deployment --all --timeout=5s
 receipt "flux controllers: $(kubectl -n "$NS" get deployments -o jsonpath='{range .items[*]}{.metadata.name}{" "}{end}')"
 
 # ---------------------------------------------------------------------------
@@ -235,21 +257,23 @@ receipt "flux controllers: $(kubectl -n "$NS" get deployments -o jsonpath='{rang
 note "applying the in-cluster registry:2 (the ghcr stand-in until phase 10)"
 kubectl apply -n "$NS" -f "$FIXTURES/registry.yaml" >/dev/null
 wait_until "the registry deployment available" \
-  kubectl -n "$NS" wait --for=condition=available deployment/image-registry --timeout=120s
+  kubectl -n "$NS" wait --for=condition=available deployment/image-registry --timeout=5s
 REG_TARGET="${NODE_IP}:${REG_NODEPORT}"
 sudo mkdir -p /etc/containers/registries.conf.d
 printf '[[registry]]\nlocation = "%s"\ninsecure = true\n' "$REG_TARGET" \
   | sudo tee /etc/containers/registries.conf.d/phase8-rehearsal.conf >/dev/null
 for _ in $(seq 1 20); do
-  curl -fsS -o /dev/null "http://${REG_TARGET}/v2/" && break
+  curl -fsS --connect-timeout 2 --max-time 5 -o /dev/null "http://${REG_TARGET}/v2/" && break
   sleep 1
 done
-curl -fsS -o /dev/null "http://${REG_TARGET}/v2/" || fail "the registry is not reachable from the runner at http://${REG_TARGET}/v2/"
+curl -fsS --connect-timeout 2 --max-time 5 -o /dev/null "http://${REG_TARGET}/v2/" \
+  || fail "the registry is not reachable from the runner at http://${REG_TARGET}/v2/"
 receipt "registry reachable from the runner at ${REG_TARGET}/v2/ (in-cluster name: registry.$NS.svc:5000)"
 
 kubectl -n "$NS" create secret generic chudmax-repo-auth \
-  --from-literal=username=fluxbot --from-literal=password="$PASS" >/dev/null
-receipt "secret chudmax-repo-auth created (the production secret's HTTPS-token form; the password never leaves the env)"
+  --from-literal=username=fluxbot --from-literal=password="$PASS" \
+  --from-file=ca.crt="$LOGS/ca.crt" >/dev/null
+receipt "secret chudmax-repo-auth created (username + password + ca.crt; the password never leaves the env)"
 
 # ---------------------------------------------------------------------------
 # the images: ONE real build, the later tags are retags of the same bytes
@@ -284,7 +308,7 @@ sed "s|__RUNNER_HTTP__|${GW}:${GIT_PORT}|" "$FIXTURES/gitrepository-rehearsal.ya
   > "$LOGS/gitrepository-rehearsal.rendered.yaml"
 kubectl apply -n "$NS" -f "$LOGS/gitrepository-rehearsal.rendered.yaml" >/dev/null
 wait_until "gitrepository chudmax-source ready" \
-  kubectl -n "$NS" wait --for=condition=ready gitrepository/chudmax-source --timeout=120s
+  kubectl -n "$NS" wait --for=condition=ready gitrepository/chudmax-source --timeout=5s
 kubectl apply -n "$NS" -f "$FIXTURES/imagerepository-rehearsal.yaml" >/dev/null
 kubectl apply -n "$NS" -f "$HERE/imagepolicy.yaml" >/dev/null
 kubectl apply -n "$NS" -f "$HERE/networkpolicy-allow-image-controllers-egress.yaml" >/dev/null
@@ -298,9 +322,9 @@ pushed_yet() { [ -n "$(kubectl -n "$NS" get imageupdateautomation/chudmax-image-
 
 scan_and_resolve() { # $1 the expected tag, $2 the expected tagCount — one image cycle
   local img="$1" tag="$2" count="$3"
-  flux reconcile image repository "chudmax-$img" >/dev/null
+  flux reconcile image repository "chudmax-$img" --timeout=30s >/dev/null || true
   wait_until "imagerepository chudmax-$img scans $count tags" repo_ready "$img" "$count"
-  flux reconcile image policy "chudmax-$img" >/dev/null
+  flux reconcile image policy "chudmax-$img" --timeout=30s >/dev/null || true
   wait_until "imagepolicy chudmax-$img resolves $tag" policy_latest "$img" "$tag"
   receipt "chudmax-$img: scanned $count tag(s), policy latest=$tag"
 }
@@ -312,9 +336,9 @@ note "beat 1 — the idle beat: with only $SEED_TAG present, the automation must
 for img in fetcher tickets-mcp web; do
   scan_and_resolve "$img" "$SEED_TAG" 1
 done
-flux reconcile image update chudmax-image-updates >/dev/null
+flux reconcile image update chudmax-image-updates --timeout=30s >/dev/null || true
 wait_until "the automation settles on the idle beat" \
-  kubectl -n "$NS" wait --for=condition=ready imageupdateautomation/chudmax-image-updates --timeout=120s
+  kubectl -n "$NS" wait --for=condition=ready imageupdateautomation/chudmax-image-updates --timeout=5s
 if pushed_yet; then
   fail "the automation PUSHED on the idle beat (lastPushCommit set) — writes are not policy-gated"
 fi
@@ -337,10 +361,10 @@ done
 # The policy changes trigger the automation outside the interval (docs) — this
 # forced reconcile is belt-and-braces; whichever path fires, the asserts below
 # are on the git state and the status, not on the triggering invocation.
-flux reconcile image update chudmax-image-updates >/dev/null
+flux reconcile image update chudmax-image-updates --timeout=30s >/dev/null || true
 wait_until "the automation pushes the $TAG2 commit" pushed_yet
 wait_until "the automation settles after the push" \
-  kubectl -n "$NS" wait --for=condition=ready imageupdateautomation/chudmax-image-updates --timeout=120s
+  kubectl -n "$NS" wait --for=condition=ready imageupdateautomation/chudmax-image-updates --timeout=5s
 PUSH1=$(kubectl -n "$NS" get imageupdateautomation/chudmax-image-updates -o jsonpath='{.status.lastPushCommit}')
 REVIEW_SHA=$(git --git-dir="$REPO_GIT" rev-parse refs/heads/review/image-updates)
 [ "$PUSH1" = "$REVIEW_SHA" ] || fail "status.lastPushCommit ($PUSH1) != the remote review tip ($REVIEW_SHA)"
@@ -372,11 +396,11 @@ done
 for img in fetcher tickets-mcp web; do
   scan_and_resolve "$img" "$TAG3" 3
 done
-flux reconcile image update chudmax-image-updates >/dev/null
+flux reconcile image update chudmax-image-updates --timeout=30s >/dev/null || true
 wait_until "the automation pushes the $TAG3 state" \
   bash -c "[ \"\$(kubectl -n '$NS' get imageupdateautomation/chudmax-image-updates -o jsonpath='{.status.lastPushCommit}')\" != '$PUSH1' ]"
 wait_until "the automation settles after the repeat" \
-  kubectl -n "$NS" wait --for=condition=ready imageupdateautomation/chudmax-image-updates --timeout=120s
+  kubectl -n "$NS" wait --for=condition=ready imageupdateautomation/chudmax-image-updates --timeout=5s
 REVIEW2=$(git --git-dir="$REPO_GIT" rev-parse refs/heads/review/image-updates)
 [ "$REVIEW2" != "$REVIEW_SHA" ] || fail "the review tip did not move on the repeat beat"
 TIP2=$(git --git-dir="$REPO_GIT" show "$REVIEW2:values/images.yaml")

@@ -4,8 +4,10 @@
 # kind node's NodePort. Ephemeral storage on purpose: the cluster is
 # throwaway and the images are retags of the same build.
 #
-# The pod is NOT selected by Flux's shipped policies (label `app:
-# image-registry`), so no policy constrains its traffic in either direction.
+# Flux's shipped `allow-scraping` NetworkPolicy in `flux-system` carries an
+# empty `podSelector: {}` (selecting EVERY pod in the namespace, default-denying
+# ingress except :8080), so `allow-image-registry-ingress` below explicitly
+# opens TCP :5000 to both the runner's NodePort push and in-cluster scans.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -53,3 +55,18 @@ spec:
       port: 5000
       targetPort: http
       nodePort: 30500
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-image-registry-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: image-registry
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 5000

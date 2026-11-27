@@ -2,13 +2,13 @@
 # (k8s/repo-sync/gitrepository.yaml). Exactly TWO deltas, both deliberate and
 # documented (the phase-5 fixture convention):
 #   1. spec.url is RENDERED by image-automation-rehearse.sh (the __RUNNER_HTTP__
-#      placeholder becomes <runner-ipv4-gateway>:<port> — the test repo lives
-#      on the CI runner over Smart HTTP; git:// is not an option: the CRD's
-#      ^(http|https|ssh):// pattern rejects it at the API server);
-#   2. the secretRef here is the REHEARSAL's basic-auth credential (keys:
-#      username, password — the production secret's documented HTTPS-token
-#      form), created out-of-band by the script; production carries the
-#      write-scoped deploy key/token in the same-named secret.
+#      placeholder becomes <runner-ipv4-gateway>:<port> over HTTPS — Flux's
+#      go-git client refuses basic auth over plain HTTP);
+#   2. the secretRef here is the REHEARSAL's basic-auth + ephemeral CA
+#      credential (keys: username, password, ca.crt — the production secret's
+#      documented HTTPS-token form), created out-of-band by the script;
+#      production carries the write-scoped deploy key/token in the same-named
+#      secret.
 # Everything else (name chudmax-source, branch main, interval 1m) is the
 # production shape — the ImageUpdateAutomation's sourceRef needs no change.
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -17,7 +17,7 @@ metadata:
   name: chudmax-source
 spec:
   interval: 1m
-  url: http://__RUNNER_HTTP__/repo.git
+  url: https://__RUNNER_HTTP__/repo.git
   ref:
     branch: main
   secretRef:

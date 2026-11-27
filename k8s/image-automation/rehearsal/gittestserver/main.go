@@ -39,13 +39,19 @@ func main() {
 	addr := flag.String("addr", "0.0.0.0:38080", "listen address (0.0.0.0 so the cluster reaches it)")
 	backend := flag.String("backend", "", "path to git-http-backend (default: probed)")
 	auth := flag.String("auth", "", "require HTTP basic auth 'user:pass' (empty = no auth)")
+	tlsCert := flag.String("tls-cert", "", "optional TLS certificate PEM path (enables HTTPS)")
+	tlsKey := flag.String("tls-key", "", "optional TLS private key PEM path (enables HTTPS)")
 	flag.Parse()
 
 	if *backend == "" {
-		for _, p := range []string{
+		candidates := []string{
 			"/usr/lib/git-core/git-http-backend",     // Debian/Ubuntu
 			"/usr/libexec/git-core/git-http-backend", // Fedora/RHEL/alpine
-		} {
+		}
+		if out, err := exec.Command("git", "--exec-path").Output(); err == nil {
+			candidates = append(candidates, strings.TrimSpace(string(out))+"/git-http-backend")
+		}
+		for _, p := range candidates {
 			if st, err := os.Stat(p); err == nil && !st.IsDir() {
 				*backend = p
 				break
@@ -64,9 +70,15 @@ func main() {
 		}
 		user, pass = (*auth)[:i], (*auth)[i+1:]
 	}
+	handler := &gitCGI{root: *root, backend: *backend, user: user, pass: pass}
+	if *tlsCert != "" || *tlsKey != "" {
+		log.Printf("serving HTTPS %s on %s via %s (auth %s)", *root, *addr, *backend,
+			map[bool]string{true: "required", false: "off"}[*auth != ""])
+		log.Fatal(http.ListenAndServeTLS(*addr, *tlsCert, *tlsKey, handler))
+	}
 	log.Printf("serving %s on %s via %s (auth %s)", *root, *addr, *backend,
 		map[bool]string{true: "required", false: "off"}[*auth != ""])
-	log.Fatal(http.ListenAndServe(*addr, &gitCGI{root: *root, backend: *backend, user: user, pass: pass}))
+	log.Fatal(http.ListenAndServe(*addr, handler))
 }
 
 type gitCGI struct {
