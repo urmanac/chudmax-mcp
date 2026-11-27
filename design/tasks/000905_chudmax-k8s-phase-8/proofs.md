@@ -18,6 +18,12 @@ RECEIPT: pre-flight complete: auth + hook mechanics proven without a cluster
 - The authed gittestserver module builds (`go vet` + `go build`, zero deps) and enforces basic
   auth: an unauthenticated `git ls-remote` fails fast (`GIT_TERMINAL_PROMPT=0` — the first run
   hung on git's credential prompt; fixed by exporting it in the script).
+- **The prompt-hang receipt (`handoff-reported`, the run's CI note):** the pre-fix run's
+  unauthenticated `git ls-remote` sat on the terminal for 90 minutes — git opens `/dev/tty` to
+  prompt for a username when basic auth is required, unless `GIT_TERMINAL_PROMPT=0` is set; a
+  `git-remote-http` child survived the script's kill and held the pts. The fix is an export at
+  the top of the script (covers every git call) plus the env set on the check itself, and the
+  re-run finishes in seconds under a 120s `timeout` guard.
 - **The hook-semantics bug the pre-flight caught (`verified-here`):** the first draft installed
   the stdin-reading main-protection as an `update` hook — but the `update` hook takes
   refname/oldrev/newrev as `$1-3` and its stdin is EMPTY, so the `while read` loop hit EOF and
