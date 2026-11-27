@@ -45,10 +45,30 @@ allowedHosts: auto
 probe:
   path: /health
 
-# Passthroughs for values this chart does not model — e.g. --mcp-config with a
-# user-mounted ConfigMap registering the in-cluster tickets-mcp Service (the
-# phase-7 wiring; the README shows the example).
+# Passthroughs for values this chart does not model — e.g. extraEnv for the
+# engine's own knobs.
 extraEnv: []
 extraArgs: []
+
+# Pod-template annotations, verbatim (empty renders none). The phase-7 canary
+# rehearsal sets the scrape annotations here (prometheus.io/scrape/port/path —
+# the path carries the /metrics?format=prometheus query) so Flagger's tiny
+# Prometheus scrapes Strata's native metrics from BOTH versions' pods; the
+# monitoring card's PodMonitor selects the same endpoint in phase 15.
+podAnnotations: {}
+
+# The phase-7 wiring: when set (an object in the Claude-Desktop McpHub format,
+# {"mcpServers": {"<name>": {"url": ...}}}), the chart renders it as an inline
+# ConfigMap, mounts it at a fixed path and appends --mcp-config <path>. The
+# config lives in the Deployment TEMPLATE, so Flagger's primary and canary
+# copies both inherit it (the canary rehearsal's hub wiring). Unset (the
+# default) renders nothing extra.
+mcpConfig: {}
+
+# The front-door Service. Flagger-managed installs turn this OFF: Flagger
+# generates its own <name>/<name>-canary/<name>-primary Services and the chart's
+# same-named Service would collide. Default on — no default-render change.
+service:
+  enabled: true
 
 resources: {}

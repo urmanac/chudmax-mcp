@@ -16,6 +16,10 @@ first. This release's allowed Hosts:
 (set web.allowedHosts="auto" — the default — for the release's Service DNS names
 + localhost; a list to override; "*" disables the check — discouraged.)
 
-Phase 7 will wire the in-cluster tickets-mcp server into Strata's McpHub via a
-mounted --mcp-config (extraArgs + a ConfigMap volume) so GET /mcp reports tool
-counts; this chart ships the passthrough knobs, not the wiring.
+The McpHub wiring (phase 7): set web.mcpConfig to the Claude-Desktop-format
+hub config ({"mcpServers": {"tickets": {"url": "http://<mcp-service>:8080/mcp"}}})
+and the chart renders it as an inline ConfigMap + the --mcp-config arg — both
+pod-template-carried, so Flagger's primary and canary copies inherit it. The
+web pods expose Strata's native Prometheus metrics at /metrics?format=prometheus
+(set web.podAnnotations with the scrape annotations to let a Prometheus scrape
+them).

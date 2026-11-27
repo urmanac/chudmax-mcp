@@ -1,0 +1,65 @@
+# The canary's metric templates — CUSTOM, on Strata's own native metrics.
+#
+# Why custom: Flagger's builtin gatewayapi templates (the HttpObserver) query
+# http_request_duration_seconds_* — a metric Strata does NOT expose (verified
+# against the pinned source + the live pre-flight). Strata serves its own
+# OpenMetrics at /metrics?format=prometheus (terminal/serve/prometheus.py):
+# vllm:request_success_total (finished requests), the
+# vllm:e2e_request_latency_seconds histogram, and the strata:* gauges.
+#
+# Calibration: the sub-second latency threshold is calibrated for --engine
+# mock (the mock finishes in ~1ms; the pre-flight measured 0.56ms). Multi-
+# second decode slots arrive with the REAL engine in phase 15 — retune there,
+# do not copy this threshold forward.
+#
+# Pod regex: Flagger's own HttpObserver style — it matches BOTH the target's
+# (canary) pods and the -primary pods (the mixed measurement is Flagger's
+# documented pod-metric pattern). The clean canary-only alternative (verified
+# from Flagger's observers/traefik.go — note it also documents Traefik's
+# service-label format):
+#   traefik_service_request_duration_seconds_bucket{
+#     service=~"{{ namespace }}-{{ target }}-canary-[0-9a-zA-Z-]+@kubernetescrd"}
+#
+# ${METRICS_SERVER} is envsubst'd by canary-rehearse.sh from the
+# canary.metricsServer knob (values-rehearsal.yaml) — phase 15 repoints the
+# knob at the monitoring card's kube-prometheus-stack with no fixture edits.
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: request-finish-rate
+  namespace: chudmax
+spec:
+  provider:
+    type: prometheus
+    address: ${METRICS_SERVER}
+  query: |
+    sum(
+      rate(
+        vllm:request_success_total{
+          kubernetes_namespace="{{ namespace }}",
+          kubernetes_pod_name=~"{{ target }}-[0-9a-zA-Z]+(-[0-9a-zA-Z]+)"
+        }[{{ interval }}]
+      )
+    )
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: request-duration-p99
+  namespace: chudmax
+spec:
+  provider:
+    type: prometheus
+    address: ${METRICS_SERVER}
+  query: |
+    histogram_quantile(
+      0.99,
+      sum(
+        rate(
+          vllm:e2e_request_latency_seconds_bucket{
+            kubernetes_namespace="{{ namespace }}",
+            kubernetes_pod_name=~"{{ target }}-[0-9a-zA-Z]+(-[0-9a-zA-Z]+)"
+          }[{{ interval }}]
+        )
+      ) by (le)
+    )

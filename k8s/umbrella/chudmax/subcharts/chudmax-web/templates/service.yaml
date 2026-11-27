@@ -1,3 +1,4 @@
+{{- if .Values.service.enabled }}
 # The web's front door. In-cluster callers reach it by this Service's DNS name
 # — which is exactly the Host header Strata's guard expects (the allowedHosts
 # auto default renders this name).
@@ -15,3 +16,4 @@ spec:
     - name: http
       port: {{ .Values.port }}
       targetPort: http
+{{- end }}

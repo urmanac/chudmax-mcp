@@ -1,0 +1,23 @@
+# The Gateway the canary's HTTPRoute attaches to. Traefik is the Gateway API
+# controller (ADR 001, production parity) — its kubernetesGateway provider
+# watches Gateways of the `traefik` GatewayClass. Same namespace as the route
+# and the backends: no cross-namespace ReferenceGrant is needed. Nothing
+# OUTSIDE the cluster dials this Gateway (no MetalLB) — the rehearsal's callers
+# reach it through its Service's ClusterIP.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: chudmax-gateway
+  namespace: chudmax
+spec:
+  gatewayClassName: traefik
+  listeners:
+    # Traefik chart 43.0.0's unprivileged `web` entrypoint listens on :8000 in
+    # the container (matching its own templates/gateway.yaml), while the
+    # `traefik` Service exposes port 80 -> targetPort `web` (:8000).
+    - name: http
+      port: 8000
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
