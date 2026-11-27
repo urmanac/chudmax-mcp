@@ -169,7 +169,11 @@ curl -fsS -o /dev/null -u "fluxbot:$PASS" "http://127.0.0.1:$GIT_PORT/repo.git/i
   || fail "the git server never became ready: $(tail -3 "$LOGS/gitserver.log")"
 receipt "git server up on :$GIT_PORT with required basic auth (identity fluxbot)"
 
-if git ls-remote "http://127.0.0.1:$GIT_PORT/repo.git" >/dev/null 2>&1; then
+# The negative AUTH control: no credentials → 401. GIT_TERMINAL_PROMPT=0 is
+# exported for every git call, and set ON THE CHECK ITSELF: without it git
+# opens /dev/tty and hangs the non-interactive run waiting for a username
+# (the CI receipt of exactly that hang, killed after 90m on the terminal).
+if GIT_TERMINAL_PROMPT=0 git ls-remote "http://127.0.0.1:$GIT_PORT/repo.git" >/dev/null 2>&1; then
   fail "the git server accepted an UNAUTHENTICATED ls-remote — the credential story would be fake"
 fi
 receipt "the auth fence bites: an unauthenticated ls-remote is refused"
