@@ -110,7 +110,7 @@ spec:
         timeout: 5s
         metadata:
           cmd: |
-            hey -z 2m -q 10 -c 2 -m POST \
+            hey -z 50s -q 10 -c 2 -m POST \
               -H "Content-Type: application/json" \
               -d '{"messages":[{"role":"user","content":"hi"}]}' \
               -host chudmax.rehearsal \

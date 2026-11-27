@@ -102,8 +102,9 @@ the fixtures:
 
 - the loadtester dispatches on `metadata.type` — the load-test webhook carries
   NO type, so its cmd is a **background** shell task answered with `202
-  Accepted`: `hey -z 2m` keeps streaming while Flagger steps the weights, and
-  `timeout: 5s` is only how long Flagger waits for the HTTP answer
+  Accepted`: `hey -z 50s` streams inside each 1m analysis window while Flagger
+  steps the weights (finishing cleanly before the next tick), and `timeout: 5s`
+  is only how long Flagger waits for the HTTP answer
   (`pkg/loadtester/server.go`).
 - the web pods' Host guard strips the port and matches the `allowedHosts`
   list **exactly** (`serve/server_parts/http_api.py` `host_allowed`/`_name_in`)

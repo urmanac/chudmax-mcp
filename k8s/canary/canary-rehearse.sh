@@ -406,7 +406,7 @@ for _ in $(seq 1 45); do
   W=$(kubectl -n "$NS" get httproute chudmax-web -o jsonpath='{range .spec.rules[*]}{range .backendRefs[*]}{.name}={.weight} {end}{end}' 2>/dev/null || true)
   GOOD_PHASE=$(kubectl -n "$NS" get canary chudmax-web -o jsonpath='{.status.phase}' 2>/dev/null || true)
   echo "$(date +%H:%M:%S) phase=$GOOD_PHASE weights: $W" | tee -a "$LOGS/weight-timeline.log"
-  if [ "$GOOD_PHASE" = "Promoted" ]; then GOOD_OK=1; break; fi
+  if [ "$GOOD_PHASE" = "Succeeded" ]; then GOOD_OK=1; break; fi
   sleep 20
 done
 [ -n "$GOOD_OK" ] || fail "the good upgrade never promoted in 15m (last phase: ${GOOD_PHASE:-none})"
@@ -459,6 +459,13 @@ for _ in $(seq 1 45); do
   BROKEN_PHASE=$(kubectl -n "$NS" get canary chudmax-web -o jsonpath='{.status.phase}' 2>/dev/null || true)
   echo "$(date +%H:%M:%S) phase=$BROKEN_PHASE weights: $W" | tee -a "$LOGS/weight-timeline.log"
   if [ "$BROKEN_PHASE" = "Failed" ]; then BROKEN_OK=1; break; fi
+  # Keep user chat traffic ticking through the Gateway (100% on primary) while
+  # the broken canary fails pre-rollout, so the post-rollback metric receipt
+  # proves primary stayed healthy throughout.
+  kubectl -n "$NS" exec deploy/loadtester -- curl -fsS -m 5 -X POST \
+    -H 'Content-Type: application/json' -H "Host: $ROUTE_HOST" \
+    -d '{"messages":[{"role":"user","content":"hi"}]}' \
+    "$TRAEFIK_URL/v1/chat/completions" >/dev/null 2>&1 || true
   sleep 20
 done
 [ -n "$BROKEN_OK" ] || fail "the broken upgrade never halted in 15m (last phase: ${BROKEN_PHASE:-none})"
@@ -470,7 +477,7 @@ BEV=$(kubectl -n "$NS" get events --field-selector involvedObject.name=chudmax-w
 echo "$BEV" | tee -a "$SUMMARY"
 TIMG=$(kubectl -n "$NS" get deploy chudmax-web -o jsonpath='{.spec.template.spec.containers[0].image}')
 case "$TIMG" in *:0.1.0) ;; *) note "post-rollback target image: $TIMG (Flagger restores the primary's template)" ;; esac
-CREPS=$(kubectl -n "$NS" get deploy chudmax-web-canary -o jsonpath='{.spec.replicas}')
+CREPS=$(kubectl -n "$NS" get deploy chudmax-web -o jsonpath='{.spec.replicas}')
 receipt "post-rollback: the target's template image ${TIMG}; the canary Deployment scaled to ${CREPS:-?}"
 BMETRIC=$(promq 'sum(rate(vllm:request_success_total{kubernetes_namespace="'"$NS"'"}[5m]))')
 if [ -n "$BMETRIC" ] && awk "BEGIN{exit !($BMETRIC > 0)}"; then
