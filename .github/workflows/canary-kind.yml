@@ -1,0 +1,123 @@
+# The phase-7 CI (T-0037): the canary rehearsal's two jobs.
+#
+#   chart — no cluster: the umbrella lints and templates in BOTH profiles
+#   (defaults + the rehearsal profile), the five canary fixtures kubeconform
+#   (the envsubst placeholders rendered with the rehearsal's in-cluster
+#   defaults), and the LAN-address hygiene grep.
+#
+#   kind — the authoritative run (kind needs rootful cgroups; the development
+#   sandbox cannot host it): `canary-rehearse.sh` end to end — kind + Cilium +
+#   Flux, the artifact chain, Traefik as the Gateway API controller (ADR 001),
+#   Flagger (meshProvider gatewayapi:v1) + its one-pod Prometheus + the
+#   loadtester, the GOOD upgrade promoted on real Strata metrics and the
+#   BROKEN upgrade caught by the pre-rollout webhook. LIVE STREAMING: the
+#   script's exec-tee emits every line to this job log as it happens and its
+#   receipts append to the run summary the moment they happen; the logs
+#   artifact is the sign-in-free diagnostic channel.
+#
+# Write set guard: this card owns k8s/canary/** + this file only. The
+# monitoring card's k8s/monitoring/** + monitoring-validate.yml and the Hermes
+# chart (k8s/chart/hermes-agent/) are OTHER cards' — never edited here.
+#
+# No secrets: the test repo is served by the runner itself; nothing is pushed
+# to any remote (contents: read only).
+
+name: canary-kind
+
+on:
+  pull_request:
+    paths:
+      - 'k8s/**'
+      - '.github/workflows/canary-kind.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'k8s/**'
+      - '.github/workflows/canary-kind.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - name: kubeconform
+        run: |
+          curl -fsSL -o /tmp/kubeconform.tgz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xf /tmp/kubeconform.tgz -C /tmp kubeconform
+      - name: lint the umbrella (deps built first)
+        run: |
+          helm lint k8s/umbrella/chudmax/subcharts/chudmax-web
+          helm dependency build k8s/umbrella/chudmax
+          helm lint k8s/umbrella/chudmax
+      - name: "template + kubeconform (defaults + the rehearsal profile)"
+        run: |
+          helm template rel k8s/umbrella/chudmax > /tmp/umb-defaults.yaml
+          helm template rel k8s/umbrella/chudmax --values k8s/canary/values-rehearsal.yaml > /tmp/umb-rehearsal.yaml
+          /tmp/kubeconform -strict -summary /tmp/umb-defaults.yaml /tmp/umb-rehearsal.yaml
+      - name: "the canary fixtures, envsubst'd then kubeconform (the Canary/MetricTemplate schemas come from the fetched catalog)"
+        run: |
+          sed 's|\${METRICS_SERVER}|http://flagger-prometheus.flagger:9090|g' k8s/canary/metric-templates.yaml > /tmp/metric-templates-rendered.yaml
+          sed 's|\${TRAEFIK_URL}|http://traefik.chudmax|g' k8s/canary/canary.yaml > /tmp/canary-rendered.yaml
+          /tmp/kubeconform -strict -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            k8s/canary/gateway.yaml /tmp/canary-rendered.yaml /tmp/metric-templates-rendered.yaml k8s/canary/mcp-config-broken.yaml
+      - name: LAN-address hygiene (no RFC1918-shaped address in any phase-7 public artifact)
+        run: |
+          ! grep -RInE '\b(10|172|192)\.[0-9]+\.[0-9]+\.[0-9]+\b' \
+            k8s/canary .github/workflows/canary-kind.yml
+
+  kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: false   # the helper module is dependency-free (no go.sum to cache)
+      - name: install podman (the web image is a pip install — it cannot cross-compile; the phase-6 pattern)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman
+      - name: install kind (pinned release binary; the script creates its OWN cluster from the phase-5 kind-config — no kind-action default cluster)
+        run: |
+          curl -fsSL -o kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          kind version
+      - name: install the flux CLI (pinned, with the schema plugin for receipts)
+        uses: fluxcd/flux2/action@v2.10.1
+        with:
+          plugins: |
+            schema
+      - name: install the cilium CLI (pinned)
+        run: |
+          curl -fsSL -o /tmp/cilium.tgz \
+            https://github.com/cilium/cilium-cli/releases/download/v0.18.7/cilium-linux-amd64.tar.gz
+          tar -xzf /tmp/cilium.tgz -C /tmp cilium
+          sudo mv /tmp/cilium /usr/local/bin/cilium
+          cilium version --client
+      - name: the rehearsal (LIVE — every line streams to this job log; each receipt appends to the run summary as it happens)
+        env:
+          REHEARSAL_LOGS: ${{ runner.temp }}/canary-logs
+          REHEARSAL_SUMMARY: ${{ runner.temp }}/canary-summary.txt
+        run: |
+          bash -n k8s/canary/canary-rehearse.sh
+          bash k8s/canary/canary-rehearse.sh
+      - name: upload the logs artifact (the sign-in-free diagnostic channel)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-logs
+          path: ${{ runner.temp }}/canary-logs

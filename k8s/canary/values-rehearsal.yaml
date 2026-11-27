@@ -1,0 +1,48 @@
+# The umbrella override profile for the phase-7 canary rehearsal.
+#
+# - engine OFF: both web versions run the in-process mock engine (--engine
+#   mock — the card's "both versions share the one engine": the canary upgrade
+#   touches only the web image, so test traffic stays small)
+# - web.service OFF: Flagger generates its own <name>/<name>-canary/<name>-primary
+#   Services; the chart's same-named Service would collide
+# - web.mcpConfig: the hub wiring — both versions' pods reach the ONE
+#   tickets-mcp Service (the umbrella pins its name chudmax-mcp, port 8080)
+# - web.podAnnotations: the scrape annotations for Flagger's tiny Prometheus —
+#   Prometheus sends Accept: application/openmetrics-text / text/plain, which
+#   Strata's GET /metrics honors natively (prometheus.io/path cannot carry a
+#   ?query string because __metrics_path__ URL-encodes '?' to '%3F')
+# - web.allowedHosts: the DEFAULT expectation; canary-rehearse.sh OVERRIDES it
+#   with the live-derived fullname list (never assumed)
+# - canary.metricsServer: the ONE knob phase 15 repoints at the monitoring
+#   card's kube-prometheus-stack (the MetricTemplates' provider address is
+#   envsubst'd from it)
+engine:
+  enabled: false
+
+web:
+  service:
+    enabled: false
+  allowedHosts:
+    # The guard strips the port and matches EXACTLY (verified against the pin:
+    # serve/server_parts/http_api.py `_name_in`) — so EVERY name a caller sends
+    # must be here verbatim. The webhook suite dials the FQDN-with-namespace
+    # form (curl sends "chudmax-web-canary.chudmax" after the port strip); the
+    # short forms stay for any same-ns short-name caller.
+    - chudmax-web-canary
+    - chudmax-web-canary.chudmax
+    - chudmax-web-primary
+    - chudmax-web-primary.chudmax
+    - chudmax.rehearsal
+    - localhost
+    - 127.0.0.1
+  mcpConfig:
+    mcpServers:
+      tickets:
+        url: http://chudmax-mcp:8080/mcp
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+
+canary:
+  metricsServer: http://flagger-prometheus.flagger:9090

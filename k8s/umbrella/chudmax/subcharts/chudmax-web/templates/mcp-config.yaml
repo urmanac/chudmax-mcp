@@ -1,0 +1,14 @@
+{{- if .Values.mcpConfig }}
+# The McpHub config as an inline ConfigMap — the phase-7 wiring. The Deployment
+# mounts it (subPath) and appends --mcp-config (see deployment.yaml), so the
+# config rides the pod TEMPLATE: Flagger's primary and canary copies both
+# inherit it. Unset (the default) renders nothing here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "chudmax-web.fullname" . }}-mcp-config
+  labels:
+    {{- include "chudmax-web.labels" . | nindent 4 }}
+data:
+  config.json: {{ .Values.mcpConfig | toJson | quote }}
+{{- end }}

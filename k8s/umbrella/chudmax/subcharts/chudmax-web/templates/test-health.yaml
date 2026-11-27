@@ -1,3 +1,4 @@
+{{- if .Values.service.enabled }}
 # The web hook: a pod curling /health through the web Service. The Host header
 # is the Service's DNS name (curl sends what it resolves) — so this hook ALSO
 # proves the allowedHosts auto default passes Strata's DNS-rebinding guard.
@@ -21,3 +22,4 @@ spec:
         - --max-time
         - "10"
         - http://{{ include "chudmax-web.fullname" . }}:{{ .Values.port }}/health
+{{- end }}
