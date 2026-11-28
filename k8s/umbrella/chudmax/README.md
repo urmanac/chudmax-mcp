@@ -11,7 +11,7 @@ The whole installable ChudMax stack as one release:
   `/v1/chat/completions` with the scripted MockEngine; the image
   (`ghcr.io/urmanac/chudmax/web`) is built and cosign-signed by that repo's CI
   (the Strata pin lives in its `web-image/README.md`).
-- **mcp** (`file://../../../chart/chudmax-mcp`, referenced read-only) — the
+- **mcp** (`file://../../chart/chudmax-mcp`, referenced read-only) — the
   fetcher sidecar + the published canonical ticket server (4b defaults); the
   fetcher waits for an ExternalArtifact until the repo-sync objects run.
 
