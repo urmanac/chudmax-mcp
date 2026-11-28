@@ -7,3 +7,7 @@ description: >-
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+
+# GHCR links the published chart package to this repo via this annotation.
+annotations:
+  org.opencontainers.image.source: https://github.com/urmanac/chudmax-mcp

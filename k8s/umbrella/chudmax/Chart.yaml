@@ -9,22 +9,26 @@ type: application
 version: 0.1.0
 appVersion: "0.1.0"
 
-# The three children live in this checkout for now: the engine and web charts
-# are in-tree subcharts (they move to urmanac/chudmax-engine and -web at the
-# phase-10 publishing milestone), the mcp chart is referenced read-only from
-# k8s/chart/chudmax-mcp. `helm dependency build` copies them into charts/
-# (gitignored). At phase 10 these file:// repositories flip to published OCI
-# references.
+# GHCR links a published chart package to its repo via this annotation (the
+# umbrella is not published in phase 10; set for the future OCI publish).
+annotations:
+  org.opencontainers.image.source: https://github.com/urmanac/chudmax-mcp
+
+# The engine and web charts are published from their own public repos since the
+# phase-10 split (urmanac/chudmax-engine, urmanac/chudmax-web — OCI refs below);
+# the mcp chart remains in-tree, referenced read-only from k8s/chart/chudmax-mcp.
+# `helm dependency update` resolves the OCI deps (credential-free once the
+# packages are public) and copies everything into charts/ (gitignored).
 dependencies:
   - name: chudmax-engine
     alias: engine
     version: 0.1.0
-    repository: file://subcharts/chudmax-engine
+    repository: oci://ghcr.io/urmanac/chudmax-engine
     condition: engine.enabled
   - name: chudmax-web
     alias: web
     version: 0.1.0
-    repository: file://subcharts/chudmax-web
+    repository: oci://ghcr.io/urmanac/chudmax-web
     condition: web.enabled
   - name: chudmax-mcp
     alias: mcp

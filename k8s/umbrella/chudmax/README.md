@@ -2,13 +2,15 @@
 
 The whole installable ChudMax stack as one release:
 
-- **engine** (`subcharts/chudmax-engine`) — the pointer: a Service without a
-  selector + the EndpointSlice at `engine.endpoint.host` (empty default; the
-  real address is installer-supplied, phase 11+).
-- **web** (`subcharts/chudmax-web`) — Strata `--engine mock`: real `/health`,
-  `/mcp`, `/v1/chat/completions` with the scripted MockEngine; the image is
-  built from the public `kingdonb/Strata` at the pin below (unpublished until
-  phase 10 — build/load it yourself until then).
+- **engine** (`oci://ghcr.io/urmanac/chudmax-engine` — published by
+  `urmanac/chudmax-engine`) — the pointer: a Service without a selector + the
+  EndpointSlice at `engine.endpoint.host` (empty default; the real address is
+  installer-supplied, phase 11+).
+- **web** (`oci://ghcr.io/urmanac/chudmax-web` — published by
+  `urmanac/chudmax-web`) — Strata `--engine mock`: real `/health`, `/mcp`,
+  `/v1/chat/completions` with the scripted MockEngine; the image
+  (`ghcr.io/urmanac/chudmax/web`) is built and cosign-signed by that repo's CI
+  (the Strata pin lives in its `web-image/README.md`).
 - **mcp** (`file://../../../chart/chudmax-mcp`, referenced read-only) — the
   fetcher sidecar + the published canonical ticket server (4b defaults); the
   fetcher waits for an ExternalArtifact until the repo-sync objects run.
@@ -19,11 +21,11 @@ The whole installable ChudMax stack as one release:
 |---|---|
 | Strata (the web image's source) | `de34ebaa521d8f628b4bb1884e5c34101730299a` (tag `v0.2.21-mbp.rtx.1`) |
 | kind (the rehearsal) | `v0.33.0` |
-| The images' references | `ghcr.io/urmanac/chudmax/{web,fetcher,tickets-mcp}:0.1.0` — all unpublished until phase 10; the rehearsal builds and loads them (no registry) |
+| The images' references | `ghcr.io/urmanac/chudmax/{web,fetcher,tickets-mcp}:0.1.0` — published by their repos' CI on `v<semver>` tags (cosign-signed, public packages); the rehearsal pulls web and builds fetcher/tickets in-repo |
 
 ## Install
 
-    helm dependency build k8s/umbrella/chudmax
+    helm dependency update k8s/umbrella/chudmax
     helm install chudmax k8s/umbrella/chudmax -n chudmax --create-namespace \
       --set engine.endpoint.host=<your-engine-host>     # e.g. the engine's address; empty = no endpoints
 
@@ -59,9 +61,12 @@ The children are named deterministically (`chudmax-engine`, `chudmax-web`,
 
 NOT proven here: the commit→tickets data path (phase 5's rehearsal owns it).
 
-## Phase-10 note
+## The published children (the phase-10 split)
 
-The in-tree subcharts move out to `urmanac/chudmax-engine` and
-`urmanac/chudmax-web` at the publishing milestone, and these `file://`
-repositories flip to the published OCI chart references
-(`ghcr.io/urmanac/chudmax/*`).
+The engine and web subcharts left the workbench at the phase-10 milestone:
+they live in their own public repos and publish OCI charts (cosign-signed) on
+`v<semver>` tags — `urmanac/chudmax-engine`, `urmanac/chudmax-web` — and this
+chart's dependencies resolve those references (`helm dependency update`,
+credential-free once the GHCR packages are public). The mcp chart remains
+in-tree in this repo. The web image is published by `urmanac/chudmax-web` (the
+`ghcr.io/urmanac/chudmax/web` package); this repo's kind rehearsal pulls it.

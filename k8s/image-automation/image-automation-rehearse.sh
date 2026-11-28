@@ -254,7 +254,7 @@ receipt "flux controllers: $(kubectl -n "$NS" get deployments -o jsonpath='{rang
 # ---------------------------------------------------------------------------
 # the registry stand-in + the credential secret
 # ---------------------------------------------------------------------------
-note "applying the in-cluster registry:2 (the ghcr stand-in until phase 10)"
+note "applying the in-cluster registry:2 (the hermetic stand-in — the rehearsal never pushes to ghcr.io)"
 kubectl apply -n "$NS" -f "$FIXTURES/registry.yaml" >/dev/null
 wait_until "the registry deployment available" \
   kubectl -n "$NS" wait --for=condition=available deployment/image-registry --timeout=5s
@@ -283,10 +283,11 @@ grep -q "$STRATA_PIN" k8s/umbrella/chudmax/README.md \
   || fail "the script's Strata pin is not in the umbrella README's pins table — drift between the script and the pin"
 pbuild "ghcr.io/urmanac/chudmax/fetcher:$SEED_TAG" k8s/image/Dockerfile k8s
 pbuild "ghcr.io/urmanac/chudmax/tickets-mcp:$SEED_TAG" k8s/tickets-mcp/Dockerfile k8s/tickets-mcp
-git init -q "$RUNNER_TEMP/strata" 2>/dev/null || true
-git -C "$RUNNER_TEMP/strata" fetch -q --depth 1 https://github.com/kingdonb/Strata "$STRATA_PIN"
-git -C "$RUNNER_TEMP/strata" checkout -q FETCH_HEAD
-pbuild "ghcr.io/urmanac/chudmax/web:$SEED_TAG" k8s/umbrella/chudmax/web-image/Dockerfile "$RUNNER_TEMP/strata"
+# The web image is PULLED (published by urmanac/chudmax-web since phase 10,
+# public) — the Strata checkout + build moved to that repo's CI. The pin-drift
+# check above stays: the pin still lives in the umbrella README's pins table.
+podman pull -q "ghcr.io/urmanac/chudmax/web:0.1.0"
+podman tag "ghcr.io/urmanac/chudmax/web:0.1.0" "ghcr.io/urmanac/chudmax/web:$SEED_TAG"
 
 rtag() { # $1 the fq image (name:tag), $2 the new tag — push through the node's NodePort
   local base

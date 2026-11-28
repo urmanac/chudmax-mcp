@@ -64,6 +64,10 @@ the bearer option (401s, pass, rotation).
 
 ## Image
 
+Published by this repo's CI: on a `v<semver>` tag the `publish` workflow builds
+the amd64+arm64 manifest list, pushes `ghcr.io/urmanac/chudmax/tickets-mcp:<tag>`
+and cosign-signs it keylessly. Local build (the same command CI runs, no push):
+
 ```sh
 podman build --platform linux/amd64,linux/arm64 \
   --manifest ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0 \
@@ -71,7 +75,7 @@ podman build --platform linux/amd64,linux/arm64 \
 ```
 
 COPY-only (no RUN), runs as uid 65532, default entrypoint stdio in pod mode against
-`/data`. No registry push from CI; publishing the image is a later phase.
+`/data`.
 
 ## What this directory is NOT
 

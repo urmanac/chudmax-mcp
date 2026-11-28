@@ -34,6 +34,8 @@ RUN { cat /etc/passwd; echo "nonroot:x:65532:65532:Linux User,,,:/:/sbin/nologin
  && { cat /etc/group;  echo "nonroot:x:65532:"; } > /group
 
 FROM alpine:3.22
+# GHCR links the published image to this repo via this label.
+LABEL org.opencontainers.image.source=https://github.com/urmanac/chudmax-mcp
 COPY --from=users /passwd /etc/passwd
 COPY --from=users /group /etc/group
 COPY --from=build /out/fetcher /usr/local/bin/fetcher

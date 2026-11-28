@@ -1,0 +1,122 @@
+# The phase-10 mirror CI (T-0037): the flux-mirror config's proof + the sync.
+#
+#   validate — the config parses (PyYAML), the hygiene grep holds, and a
+#              `flux mirror sync --dry-run` resolves every entry against the
+#              real upstream catalogs (read-only: it writes nothing) — the
+#              end-to-end config proof on every PR / main push / dispatch.
+#
+#   sync     — the real mirror write, ONLY on the weekly schedule, a dispatch,
+#              or a main push that touches the mirror: flux CLI pinned
+#              (v2.10.1), the mirror plugin installed (its version is
+#              receipted into the summary), ghcr.io auth via the GITHUB_TOKEN
+#              (packages: write — the org's default-token read setting is
+#              preserved; per-job elevation only), then `flux mirror sync`,
+#              and the pull-back receipts: the phase-9-pinned hermes-agent
+#              image (digest equality vs upstream's recorded
+#              sha256:ef0650d5… — the byte-for-byte copy proof) and the
+#              flagger chart at the phase-7 pin (1.45.0).
+#
+# The pull-back checks need the mirrored packages PUBLIC (the phase-10 flips)
+# — until then they fail on the 401/404, which is the honest state, not a
+# defect. CI runs the sync before the flips only on the dispatch path.
+
+name: mirror-sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'k8s/mirror/**'
+      - '.github/workflows/mirror-sync.yml'
+  pull_request:
+    paths:
+      - 'k8s/mirror/**'
+      - '.github/workflows/mirror-sync.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+
+env:
+  FLUX_VERSION: v2.10.1
+  HERMES_DIGEST: sha256:ef0650d523ee1b5ab32c779acabc446d9936869a9932591553688a62bcf0c42f # the phase-9 pin receipt
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: the config parses
+        run: |
+          python3 - <<'EOF'
+          import yaml
+          cfg = yaml.safe_load(open("k8s/mirror/flux-mirror.yaml"))
+          assert cfg["apiVersion"] == "mirror.plugin.fluxcd.io/v1beta2", cfg["apiVersion"]
+          assert cfg["kind"] == "Config"
+          assert len(cfg["charts"]) == 3 and len(cfg["artifacts"]) == 5
+          print("charts:", [c["name"] for c in cfg["charts"]])
+          print("artifacts:", [a["destination"] for a in cfg["artifacts"]])
+          EOF
+      - name: every destination is ghcr.io/urmanac (GHCR-only for now)
+        run: |
+          if grep -E '^[[:space:]]*destination:' k8s/mirror/flux-mirror.yaml | grep -vq 'ghcr.io/urmanac'; then
+            echo 'FAIL: a mirror destination is not ghcr.io/urmanac'
+            grep -E '^[[:space:]]*destination:' k8s/mirror/flux-mirror.yaml
+            exit 1
+          fi
+          echo 'GHCR-only destinations OK'
+      - name: LAN-address + credential hygiene
+        run: |
+          ! grep -RInE '\b(10|172|192)\.[0-9]+\.[0-9]+\.[0-9]+\b' k8s/mirror .github/workflows/mirror-sync.yml
+          ! grep -RInE '(password|secret)[[:space:]]*[:=]' k8s/mirror
+          echo 'hygiene OK'
+      - uses: fluxcd/flux2/action@v2.10.1
+        with:
+          version: ${{ env.FLUX_VERSION }}
+      - name: install the mirror plugin + dry-run the config (resolves every entry, writes nothing)
+        run: |
+          flux plugin install mirror
+          flux plugin list | tee /tmp/plugins.txt
+          flux mirror sync k8s/mirror/flux-mirror.yaml --dry-run 2>&1 | tee /tmp/dryrun.log
+
+  sync:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: log in to ghcr.io (the mirror's write destination)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: fluxcd/flux2/action@v2.10.1
+        with:
+          version: ${{ env.FLUX_VERSION }}
+      - name: flux mirror sync (the real write)
+        run: |
+          flux plugin install mirror
+          flux plugin list | tee -a /tmp/sync.log
+          flux mirror sync k8s/mirror/flux-mirror.yaml 2>&1 | tee -a /tmp/sync.log
+          cat /tmp/sync.log >> "$GITHUB_STEP_SUMMARY"
+      - name: pull-back receipt — the hermes-agent image at the phase-9 pin (digest equality = the byte-for-byte proof)
+        run: |
+          docker pull ghcr.io/urmanac/nousresearch/hermes-agent:v0.23.4
+          got=$(docker image inspect --format '{{index .RepoDigests 0}}' \
+            ghcr.io/urmanac/nousresearch/hermes-agent:v0.23.4 | grep -oE 'sha256:[a-f0-9]+')
+          echo "mirror digest: $got"
+          [ "$got" = "$HERMES_DIGEST" ] || { echo "digest drift vs upstream"; exit 1; }
+          echo "digest matches the upstream receipt OK" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: pull-back receipt — the flagger chart at the phase-7 pin
+        run: |
+          curl -fsSL -o /tmp/helm.tgz https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz
+          tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm && mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm pull oci://ghcr.io/urmanac/charts/flagger --version 1.45.0 -d /tmp
+          ls -l /tmp/flagger-1.45.0.tgz
+          echo "charts/flagger:1.45.0 pulled anonymously OK" | tee -a "$GITHUB_STEP_SUMMARY"

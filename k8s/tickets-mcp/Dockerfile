@@ -9,6 +9,8 @@
 # emulation (the multi-arch python base carries the arch difference; the fetcher image
 # needs its cross-compile pin, this one does not).
 FROM python:3.12-alpine
+# GHCR links the published image to this repo via this label.
+LABEL org.opencontainers.image.source=https://github.com/urmanac/chudmax-mcp
 
 COPY tools/mcp/ticket_mcp.py /app/ticket_mcp.py
 

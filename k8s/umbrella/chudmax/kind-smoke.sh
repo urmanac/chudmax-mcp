@@ -30,10 +30,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 CHART="$HERE"
-STRATA_REPO="${STRATA_REPO:-https://github.com/kingdonb/Strata}"
-STRATA_PIN="${STRATA_PIN:-de34ebaa521d8f628b4bb1884e5c34101730299a}"
 CLUSTER="${CLUSTER:-chudmax-phase6}"
 NS=chudmax
+# The web image is PULLED (published by urmanac/chudmax-web on its v<semver>
+# tag, public since the phase-10 flip) — the Strata checkout + build moved to
+# that repo's CI; the pin lives in its web-image/README.md.
 WEB_IMAGE="ghcr.io/urmanac/chudmax/web:0.1.0"
 FETCHER_IMAGE="ghcr.io/urmanac/chudmax/fetcher:0.1.0"
 SERVER_IMAGE="ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0"
@@ -88,13 +89,11 @@ spec:
 EOF
 echo "  the mapping fixture applied ✓"
 
-say "2. Strata at the pin ($STRATA_PIN)"
-git init -q "$WORK/strata"
-git -C "$WORK/strata" fetch -q --depth 1 "$STRATA_REPO" "$STRATA_PIN"
-git -C "$WORK/strata" checkout -q FETCH_HEAD
-echo "  checked out: $(git -C "$WORK/strata" rev-parse HEAD)"
+say "2. the web image, pulled from ghcr (published by urmanac/chudmax-web)"
+podman pull -q "$WEB_IMAGE"
+echo "  pulled: $WEB_IMAGE"
 
-say "3. images: podman build → podman save → kind load image-archive (no registry)"
+say "3. images: build (this repo's two) + podman save → kind load image-archive"
 # A retry for the registry transient this repo's CI has hit before (the phase-3
 # precedent): parallel jobs pull base images from the same shared anonymous
 # buckets, and a pull can fail transiently (podman exits 125).
@@ -107,7 +106,6 @@ pbuild() {
   done
   die "the build of $tag failed three times (see the podman output above)"
 }
-pbuild "$WEB_IMAGE" "$HERE/web-image/Dockerfile" "$WORK/strata"
 pbuild "$FETCHER_IMAGE" "$REPO/k8s/image/Dockerfile" "$REPO/k8s"
 pbuild "$SERVER_IMAGE" "$REPO/k8s/tickets-mcp/Dockerfile" "$REPO/k8s/tickets-mcp"
 for img in "$WEB_IMAGE" "$FETCHER_IMAGE" "$SERVER_IMAGE" "$CURL_IMAGE"; do
@@ -229,7 +227,10 @@ echo "  route won: $EN_ROUTE"
 
 say "6. helm install (chart defaults + the engine endpoint)"
 rm -rf "$CHART/charts"
-helm dependency build "$CHART" >/dev/null
+# update (not build): the engine/web deps are published OCI references now —
+# resolved credential-free once the GHCR packages are public; the local
+# regenerates the lock (not committed back from CI).
+helm dependency update "$CHART" >/dev/null
 helm template "$CLUSTER-defaults" "$CHART" > "$WORK/rendered.yaml"
 # Assert the CRD SHAPE, not the word: the read-only mcp chart's egress template
 # carries "Cilium" inside its explanatory YAML comments (raw comments render

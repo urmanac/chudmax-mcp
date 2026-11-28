@@ -1,0 +1,82 @@
+# The flux-mirror config (T-0037 phase 10): the third-party charts/images the
+# ChudMax stack consumes, mirrored into the org's own GHCR so clusters never
+# reach upstream registries at reconcile time.
+#
+# Tool: the Flux Mirror CLI plugin (github.com/fluxcd/flux-mirror — a CLI, not
+# a controller): `flux mirror sync k8s/mirror/flux-mirror.yaml` (idempotent;
+# re-runs copy only what is missing or drifted). CI runs it on a weekly
+# schedule + dispatch (.github/workflows/mirror-sync.yml); a human rerun is
+# the same command.
+#
+# GHCR-ONLY for now (milestone note, 2026-11-26): every destination is
+# ghcr.io/urmanac/...; Docker Hub ('urmanac' account owned) is a later
+# SECONDARY destination. House artifacts are NOT mirrored here — the house
+# images/charts are published by their own repos (see k8s/mirror/README.md).
+#
+# Selectors carry the same semver shapes the consumers pin today (the phase-7
+# canary pins, the monitoring module's KPS range, the phase-9 image floor);
+# exact pinning stays the consumers' job. includeReferrers carries upstream
+# signatures/attestations where they exist.
+
+apiVersion: mirror.plugin.fluxcd.io/v1beta2
+kind: Config
+
+# Third-party HELM CHARTS (HTTP/S repos → OCI under the charts/ prefix;
+# helm push appends the chart name, so flagger lands at
+# ghcr.io/urmanac/charts/flagger:<version> — package "charts/flagger").
+charts:
+  - name: flagger
+    source: https://flagger.app
+    destination: oci://ghcr.io/urmanac/charts
+    version: ">=1.45.0 <2.0.0"
+    limit: 3
+  - name: loadtester
+    source: https://flagger.app
+    destination: oci://ghcr.io/urmanac/charts
+    version: ">=0.39.0 <1.0.0"
+    limit: 3
+  - name: traefik
+    source: https://traefik.github.io/charts
+    destination: oci://ghcr.io/urmanac/charts
+    version: ">=43.0.0 <44.0.0"
+    limit: 3
+
+# Third-party OCI ARTIFACTS (charts and images, OCI → OCI, whole multi-arch
+# lists byte-for-byte; destinations keep the upstream path for provenance).
+artifacts:
+  # The kube-prometheus-stack OCI chart (the monitoring module's
+  # OCIRepository source, semver 69.x).
+  - source: oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
+    destination: ghcr.io/urmanac/charts/kube-prometheus-stack
+    selector:
+      semver: ">=69.0.0 <70.0.0"
+      limit: 3
+    includeReferrers: true
+  # Flagger + its loadtester (the canary rehearsal's pair).
+  - source: ghcr.io/fluxcd/flagger
+    destination: ghcr.io/urmanac/fluxcd/flagger
+    selector:
+      semver: ">=1.45.0 <2.0.0"
+      limit: 3
+    includeReferrers: true
+  - source: ghcr.io/fluxcd/flagger-loadtester
+    destination: ghcr.io/urmanac/fluxcd/flagger-loadtester
+    selector:
+      semver: ">=0.39.0 <1.0.0"
+      limit: 3
+    includeReferrers: true
+  # Traefik (the Gateway API controller, ADR 001; the chart's image).
+  - source: docker.io/library/traefik
+    destination: ghcr.io/urmanac/library/traefik
+    selector:
+      semver: ">=3.0.0 <4.0.0"
+      limit: 3
+    includeReferrers: true
+  # The Hermes agent image (the hermes-agent chart's upstream image; the
+  # phase-9 pin v0.23.4 = manifest-list digest sha256:ef0650d5…).
+  - source: docker.io/nousresearch/hermes-agent
+    destination: ghcr.io/urmanac/nousresearch/hermes-agent
+    selector:
+      semver: ">=0.23.4 <1.0.0"
+      limit: 3
+    includeReferrers: true

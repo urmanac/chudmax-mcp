@@ -12,8 +12,9 @@ What this install does NOT have yet:
    retrying every resync period — it does not crash-loop (T-0037 phase 4b) —
    and picks the artifact up when it appears.
 2. The images, if you kept the default tags: ghcr.io/urmanac/chudmax/fetcher
-   and ghcr.io/urmanac/chudmax/tickets-mcp are unpublished until the phase-10
-   milestone. Build/load them yourself meanwhile:
+   and ghcr.io/urmanac/chudmax/tickets-mcp are published by this repo's CI on
+   a v<semver> tag (multi-arch, cosign-signed). Until the first tag lands —
+   or for a local run — build and load them yourself:
 
      podman build --platform linux/amd64,linux/arm64 \
        --manifest ghcr.io/urmanac/chudmax/fetcher:0.1.0 \

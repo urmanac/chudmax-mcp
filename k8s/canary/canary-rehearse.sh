@@ -31,8 +31,9 @@ SUMMARY=${REHEARSAL_SUMMARY:-/tmp/canary-summary.txt}
 PROVIDER=${KIND_EXPERIMENTAL_PROVIDER:-docker}
 BUILDER=${REHEARSAL_BUILDER:-podman}
 CHAIN_WAIT=${REHEARSAL_CHAIN_WAIT:-240}    # seconds a commit may take to show up
-STRATA_REPO=${STRATA_REPO:-https://github.com/kingdonb/Strata}
-STRATA_PIN=de34ebaa521d8f628b4bb1884e5c34101730299a   # v0.2.21-mbp.rtx.1 (the umbrella README's pin)
+# The web image is PULLED (published by urmanac/chudmax-web on its v<semver>
+# tag, public since the phase-10 flip) — the Strata checkout + build moved to
+# that repo's CI; the pin lives in its web-image/README.md.
 WEB_IMAGE=ghcr.io/urmanac/chudmax/web:0.1.0           # the chart's default tag (loaded, IfNotPresent)
 WEB_GOOD=ghcr.io/urmanac/chudmax/web:0.1.1            # same bytes, retagged (the good upgrade)
 WEB_BROKEN=ghcr.io/urmanac/chudmax/web:0.1.1-broken   # same bytes, retagged (the broken upgrade)
@@ -172,12 +173,12 @@ done
 [ "$EST" = "True" ] || fail "the Gateway API CRDs never established"
 receipt "Gateway API CRDs established ($GATEWAY_API_REF)"
 
-note "building the images (Strata web at the pin + fetcher + the canonical server) and loading them"
-rm -rf "$LOGS/strata"; mkdir -p "$LOGS/strata"
-git init -q "$LOGS/strata"
-git -C "$LOGS/strata" fetch -q --depth 1 "$STRATA_REPO" "$STRATA_PIN"
-git -C "$LOGS/strata" checkout -q FETCH_HEAD
-receipt "strata checked out at $STRATA_PIN"
+note "pulling the web image (published by urmanac/chudmax-web) + building fetcher and the canonical server"
+"$BUILDER" pull -q "$WEB_IMAGE" >/dev/null
+# The two upgrade tags are the SAME bytes retagged — one pull, three tags.
+"$BUILDER" tag "$WEB_IMAGE" "$WEB_GOOD"
+"$BUILDER" tag "$WEB_IMAGE" "$WEB_BROKEN"
+receipt "web image pulled: $WEB_IMAGE (retagged $WEB_GOOD / $WEB_BROKEN)"
 pbuild() { # the phase-6 kind-smoke pattern: the shared anonymous buckets' pull transients
   local tag="$1" file="$2" ctx="$3" attempt
   for attempt in 1 2 3; do
@@ -187,10 +188,6 @@ pbuild() { # the phase-6 kind-smoke pattern: the shared anonymous buckets' pull 
   done
   fail "the build of $tag failed three times"
 }
-pbuild "$WEB_IMAGE" "$REPO/k8s/umbrella/chudmax/web-image/Dockerfile" "$LOGS/strata"
-# The two upgrade tags are the SAME bytes retagged — one build, three tags.
-"$BUILDER" tag "$WEB_IMAGE" "$WEB_GOOD"
-"$BUILDER" tag "$WEB_IMAGE" "$WEB_BROKEN"
 pbuild "$FETCHER_IMAGE" "$REPO/k8s/image/Dockerfile" "$REPO/k8s"
 pbuild "$SERVER_IMAGE" "$REPO/k8s/tickets-mcp/Dockerfile" "$REPO/k8s/tickets-mcp"
 if [ "$BUILDER" = "podman" ]; then
@@ -254,7 +251,9 @@ receipt "Traefik up (GatewayClass traefik present; the Service dials in-cluster,
 # ---------------------------------------------- the umbrella (rehearsal profile)
 note "installing the umbrella with the rehearsal profile (engine off, chart Service off, the hub wiring on, the scrape annotations on)"
 rm -rf "$REPO/k8s/umbrella/chudmax/charts"
-helm dependency build "$REPO/k8s/umbrella/chudmax" >/dev/null
+# update (not build): the engine/web deps are published OCI references now —
+# resolved credential-free once the GHCR packages are public.
+helm dependency update "$REPO/k8s/umbrella/chudmax" >/dev/null
 helm upgrade --install "$REL" "$REPO/k8s/umbrella/chudmax" -n "$NS" --create-namespace \
   --values "$HERE/values-rehearsal.yaml" >/dev/null
 kubectl -n "$NS" rollout status deploy/chudmax-web --timeout=300s

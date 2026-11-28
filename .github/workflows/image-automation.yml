@@ -10,8 +10,9 @@
 # run before anything uploads.
 #
 # No secrets: the registry and the test git repo are runner-local stand-ins
-# (ghcr.io stays unpublished until phase 10); the bot credential is generated
-# inside the job and never leaves it.
+# (the rehearsal stays hermetic even now that ghcr.io is published — it pushes
+# only to the stand-in); the bot credential is generated inside the job and
+# never leaves it.
 #
 # This file is phase 8's only workflow edit surface.
 

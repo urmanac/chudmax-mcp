@@ -8,7 +8,14 @@ result as an artifact; source-watcher's ArtifactGenerator narrows it to what
 the ticket server reads. The fetcher in [`k8s/fetcher/`](k8s/fetcher/) is the
 consuming side: it watches one ExternalArtifact, downloads the tarball, checks
 the digest, unpacks beside the previous copy, and swaps a symlink so a reader
-never sees half a tree. No git code, no restarts, no half-updated reads.
+never sees half a tree.
+
+The workbench's other installable charts moved out at the phase-10 publishing
+milestone: the engine and web charts live in `urmanac/chudmax-engine` and
+`urmanac/chudmax-web` (the umbrella here resolves their published OCI
+references), and the Hermes chart lives in `urmanac/hermes-agent`. Every
+published image and chart is cosign-signed keylessly by its repo's CI, and the
+third-party dependencies are mirrored by [`k8s/mirror/`](k8s/mirror/). No git code, no restarts, no half-updated reads.
 
 ## What this repo delivers
 
@@ -62,8 +69,9 @@ Two things a fresh install does not have yet:
   crash-loop) and self-heals once the artifact appears.
 - **The published images.** The default tags
   `ghcr.io/urmanac/chudmax/fetcher:0.1.0` and
-  `ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0` are unpublished until the
-  publishing milestone. Build them yourself meanwhile:
+  `ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0` are published by this repo's CI
+  on a `v<semver>` tag (multi-arch manifest lists, cosign-signed keylessly,
+  public GHCR packages — anonymous pulls). Build them yourself meanwhile:
 
   ```
   podman build --platform linux/amd64,linux/arm64 \

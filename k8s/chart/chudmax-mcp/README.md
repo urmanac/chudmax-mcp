@@ -26,8 +26,10 @@ when `server.auth.enabled` — so the pod is Ready only when the MCP surface
 actually answers.
 
 Both default image tags (`ghcr.io/urmanac/chudmax/fetcher:0.1.0`,
-`ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0`) are unpublished until the
-phase-10 publishing milestone — build and load them yourself meanwhile:
+`ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0`) are published by this repo's CI:
+on a `v<semver>` tag, the `publish` workflow builds the amd64+arm64 manifest
+lists, pushes them to ghcr.io and cosign-signs them keylessly. Until the first
+tag lands — or for a local run — build and load them yourself:
 
 ```
 podman build --platform linux/amd64,linux/arm64 \
@@ -36,7 +38,6 @@ podman build --platform linux/amd64,linux/arm64 \
   --manifest ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0 \
   -f k8s/tickets-mcp/Dockerfile k8s/tickets-mcp
 ```
-
 ## Bring your own server
 
 Override the `server.*` values — keep `--data-root` pointed at the shared

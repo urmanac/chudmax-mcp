@@ -17,7 +17,7 @@ want the bump.
 
 | File | Object |
 |---|---|
-| `imagerepository.yaml` | 3× `ImageRepository` — the ghcr.io references (production; unpublished until phase 10) |
+| `imagerepository.yaml` | 3× `ImageRepository` — the ghcr.io references (production; published + public since phase 10, so the anonymous scans resolve) |
 | `imagepolicy.yaml` | 3× `ImagePolicy` — `semver.range: '>=0.1.0 <1.0.0'` (stable 0.x line; prereleases excluded) |
 | `imageupdateautomation.yaml` | `ImageUpdateAutomation chudmax-image-updates` — Setters, bot author, `review/image-updates` |
 | `networkpolicy-allow-image-controllers-egress.yaml` | additive egress allow for the two image controllers (the registry scan / the git push) |
@@ -30,8 +30,9 @@ want the bump.
 - `ghcr.io/urmanac/chudmax/tickets-mcp` — the canonical ticket server (`k8s/tickets-mcp/Dockerfile`).
 - `ghcr.io/urmanac/chudmax/web` — Strata built at the pinned SHA (`k8s/umbrella/chudmax/web-image/Dockerfile`; the pin lives in the umbrella README's pins table).
 - **hermes-agent has no ImageRepository, on purpose**: the Hermes chart
-  (`k8s/chart/hermes-agent/`) consumes upstream `nousresearch/hermes-agent`
-  semver tags chosen manually. The automation loop is for the images we build.
+  (published from `urmanac/hermes-agent` since phase 10) consumes upstream
+  `nousresearch/hermes-agent` semver tags chosen manually. The automation loop
+  is for the images we build.
 
 ## Rehearsal ↔ production mapping
 

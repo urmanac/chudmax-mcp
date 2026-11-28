@@ -19,7 +19,8 @@
 #
 # Write set guard: this card owns k8s/canary/** + this file only. The
 # monitoring card's k8s/monitoring/** + monitoring-validate.yml and the Hermes
-# chart (k8s/chart/hermes-agent/) are OTHER cards' — never edited here.
+# chart (urmanac/hermes-agent since the phase-10 split) are OTHER cards' —
+# never edited here.
 #
 # No secrets: the test repo is served by the runner itself; nothing is pushed
 # to any remote (contents: read only).
@@ -60,10 +61,10 @@ jobs:
           curl -fsSL -o /tmp/kubeconform.tgz \
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
           tar -xf /tmp/kubeconform.tgz -C /tmp kubeconform
-      - name: lint the umbrella (deps built first)
+      - name: lint the umbrella (published OCI deps resolved first — credential-free once the packages are public)
         run: |
-          helm lint k8s/umbrella/chudmax/subcharts/chudmax-web
-          helm dependency build k8s/umbrella/chudmax
+          rm -rf k8s/umbrella/chudmax/charts
+          helm dependency update k8s/umbrella/chudmax
           helm lint k8s/umbrella/chudmax
       - name: "template + kubeconform (defaults + the rehearsal profile)"
         run: |

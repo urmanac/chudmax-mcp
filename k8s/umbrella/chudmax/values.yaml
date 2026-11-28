@@ -20,8 +20,8 @@ web:
   enabled: true
   fullnameOverride: chudmax-web
   # The web subchart's own defaults carry the install (Strata --engine mock on
-  # ghcr.io/urmanac/chudmax/web:0.1.0 — unpublished until phase 10; allowedHosts
-  # auto; probes on /health). Override web.* to shape it.
+  # ghcr.io/urmanac/chudmax/web:0.1.0 — published by urmanac/chudmax-web;
+  # allowedHosts auto; probes on /health). Override web.* to shape it.
 
 mcp:
   enabled: true

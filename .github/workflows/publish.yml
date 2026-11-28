@@ -1,0 +1,162 @@
+# The phase-10 publishing pipeline for urmanac/chudmax-mcp (T-0037 phase 10).
+#
+#   publish — ONLY on a v<semver> tag push or an explicit workflow_dispatch:
+#             the tag version is asserted equal to the chart version, then:
+#               - the fetcher image: multi-arch manifest list (amd64+arm64,
+#                 emulation-free cross-compile) pushed as
+#                 ghcr.io/urmanac/chudmax/fetcher:<version>;
+#               - the tickets-mcp image: multi-arch manifest list (COPY-only,
+#                 no RUN) pushed as ghcr.io/urmanac/chudmax/tickets-mcp:<version>;
+#               - the chudmax-mcp chart: helm package + push to the FLAT
+#                 prefix oci://ghcr.io/urmanac (helm push appends the chart
+#                 NAME → ghcr.io/urmanac/chudmax-mcp:<version>);
+#               - cosign signs all three keylessly under the runner's OIDC
+#                 identity and immediately verifies (identity pinned to this
+#                 repo+workflow) — the receipts land in the step summary.
+#
+# The existing image-chart.yml keeps its build-only proof on every push/PR —
+# this workflow adds the release path, nothing else. Per-job permissions are
+# the only elevation (contents: read, packages: write, id-token: write) — the
+# org's default GITHUB_TOKEN read setting is preserved.
+#
+# The Dockerfiles carry org.opencontainers.image.source labels and the chart
+# carries the same annotation, so GHCR links every package to this repo.
+#
+# Publish tags are immutable by convention: re-publishing a version with
+# different bytes would silently drift every digest pin and cosign signature —
+# a re-publish is a NEW version or an explicit dispatch.
+
+name: publish
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetcher-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: resolve the version (tag-derived, or the chart's on dispatch)
+        run: |
+          CHART_VER=$(awk '/^version:/ {print $2}' k8s/chart/chudmax-mcp/Chart.yaml | tr -d '"')
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+            [ "$VER" = "$CHART_VER" ] || { echo "tag $GITHUB_REF_NAME != chart version $CHART_VER"; exit 1; }
+          else
+            VER="$CHART_VER"
+          fi
+          echo "VER=$VER" | tee -a "$GITHUB_ENV"
+      - name: install podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman
+      - name: log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: build and push the fetcher manifest list (amd64 + arm64)
+        run: |
+          podman build --platform linux/amd64,linux/arm64 \
+            --manifest ghcr.io/urmanac/chudmax/fetcher:${VER} \
+            -f k8s/image/Dockerfile k8s
+          podman manifest push --all "ghcr.io/urmanac/chudmax/fetcher:${VER}" \
+            "ghcr.io/urmanac/chudmax/fetcher:${VER}" | tee /tmp/push.log
+      - uses: sigstore/cosign-installer@v3
+      - name: cosign keyless sign + verify (the workflow's OIDC identity)
+        run: |
+          cosign sign --yes "ghcr.io/urmanac/chudmax/fetcher:${VER}"
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp \
+              '^https://github.com/urmanac/chudmax-mcp/\.github/workflows/publish\.yml@refs/(tags/v|heads/main)' \
+            "ghcr.io/urmanac/chudmax/fetcher:${VER}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  tickets-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: resolve the version (tag-derived, or the chart's on dispatch)
+        run: |
+          CHART_VER=$(awk '/^version:/ {print $2}' k8s/chart/chudmax-mcp/Chart.yaml | tr -d '"')
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+            [ "$VER" = "$CHART_VER" ] || { echo "tag $GITHUB_REF_NAME != chart version $CHART_VER"; exit 1; }
+          else
+            VER="$CHART_VER"
+          fi
+          echo "VER=$VER" | tee -a "$GITHUB_ENV"
+      - name: install podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman
+      - name: log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: build and push the tickets-mcp manifest list (amd64 + arm64, COPY-only)
+        run: |
+          podman build --platform linux/amd64,linux/arm64 \
+            --manifest ghcr.io/urmanac/chudmax/tickets-mcp:${VER} \
+            -f k8s/tickets-mcp/Dockerfile k8s/tickets-mcp
+          podman manifest push --all "ghcr.io/urmanac/chudmax/tickets-mcp:${VER}" \
+            "ghcr.io/urmanac/chudmax/tickets-mcp:${VER}" | tee /tmp/push.log
+      - uses: sigstore/cosign-installer@v3
+      - name: cosign keyless sign + verify (the workflow's OIDC identity)
+        run: |
+          cosign sign --yes "ghcr.io/urmanac/chudmax/tickets-mcp:${VER}"
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp \
+              '^https://github.com/urmanac/chudmax-mcp/\.github/workflows/publish\.yml@refs/(tags/v|heads/main)' \
+            "ghcr.io/urmanac/chudmax/tickets-mcp:${VER}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  chart:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - name: resolve the version (tag-derived, or the chart's on dispatch)
+        run: |
+          CHART_VER=$(awk '/^version:/ {print $2}' k8s/chart/chudmax-mcp/Chart.yaml | tr -d '"')
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+            [ "$VER" = "$CHART_VER" ] || { echo "tag $GITHUB_REF_NAME != chart version $CHART_VER"; exit 1; }
+          else
+            VER="$CHART_VER"
+          fi
+          echo "VER=$VER" | tee -a "$GITHUB_ENV"
+      - name: log in to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+      - name: package and push the chart
+        run: |
+          helm package k8s/chart/chudmax-mcp
+          helm push "chudmax-mcp-${VER}.tgz" oci://ghcr.io/urmanac 2>&1 | tee /tmp/push.log
+          DIGEST=$(grep -oE 'sha256:[a-f0-9]+' /tmp/push.log | tail -1)
+          [ -n "$DIGEST" ] && echo "CHART_DIGEST=$DIGEST" | tee -a "$GITHUB_ENV" \
+            || { echo 'helm push printed no digest'; exit 1; }
+      - uses: sigstore/cosign-installer@v3
+      - name: cosign keyless sign + verify (the workflow's OIDC identity, by digest)
+        run: |
+          cosign sign --yes "ghcr.io/urmanac/chudmax-mcp@${CHART_DIGEST}"
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp \
+              '^https://github.com/urmanac/chudmax-mcp/\.github/workflows/publish\.yml@refs/(tags/v|heads/main)' \
+            "ghcr.io/urmanac/chudmax-mcp@${CHART_DIGEST}" | tee "${GITHUB_STEP_SUMMARY}"

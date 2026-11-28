@@ -7,10 +7,11 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  # The fetcher image. NOTE: this tag is unpublished until the phase-10
-  # publishing milestone — until then build/load the image yourself
-  # (podman build --platform linux/amd64,linux/arm64 --manifest
-  # <registry>/<name>:<tag> -f k8s/image/Dockerfile k8s).
+  # The fetcher image — published by this repo's CI on a v<semver> tag
+  # (multi-arch, cosign-signed). Until the first tag lands — or for a local
+  # run — build/load the image yourself (podman build --platform
+  # linux/amd64,linux/arm64 --manifest <registry>/<name>:<tag>
+  # -f k8s/image/Dockerfile k8s).
   repository: ghcr.io/urmanac/chudmax/fetcher
   tag: "0.1.0"
   pullPolicy: IfNotPresent
@@ -45,8 +46,8 @@ fetcher:
 # symlink) and its artifact.json, no restarts.
 # Bring your own: override image/command/args (keep --data-root on the shared
 # volume so the per-call contract holds), or set enabled: false to run the
-# fetcher alone. The image tag is unpublished until the phase-10
-# publishing milestone — build/load it yourself meanwhile (podman build
+# fetcher alone. The image tag is published by this repo's CI on a v<semver>
+# tag — until then build/load it yourself (podman build
 # --platform linux/amd64,linux/arm64 --manifest <registry>/<name>:<tag>
 # -f k8s/tickets-mcp/Dockerfile k8s/tickets-mcp).
 server:

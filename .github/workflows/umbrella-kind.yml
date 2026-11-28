@@ -1,20 +1,22 @@
-# The phase-6 CI: the three new charts (the engine pointer, the web Strata
-# shell, the umbrella) lint/template/kubeconform in both variants; the Strata
-# web image builds for both architectures (the arm64 leg under qemu binfmt —
-# this is the effort's first pip-install image, which cannot cross-compile);
-# and the kind job runs the full umbrella rehearsal (kind-smoke.sh) — the
-# authoritative receipt for what the development sandbox could not run (kind
-# needs systemd cgroup delegation; a rootless sandbox cannot host it, GitHub's
-# rootful runners can).
+# The umbrella chart's CI (the phase-10 shape): the engine and web charts moved
+# to their own public repos at the phase-10 split (urmanac/chudmax-engine,
+# urmanac/chudmax-web — their validate+publish pipelines live there), so this
+# workflow proves the umbrella against the PUBLISHED references: the chart job
+# resolves the OCI deps credential-free (the packages are public) and
+# lints/templates/kubeconforms both variants, and the kind job runs the full
+# umbrella rehearsal (kind-smoke.sh) — which now PULLS the published web image
+# (urmanac/chudmax-web's CI builds it) while still building this repo's two
+# pod images from the in-repo Dockerfiles.
 #
 # The rehearsal's honest framing (printed by the script): the /health-through-
 # the-engine-Service proof exercises the Service→EndpointSlice→external-host
-# path against the mock engine (the same Strata image, --engine mock, outside
+# path against the mock engine (the published web image, --engine mock, outside
 # kind on the docker bridge) — NOT the real engine; the commit→tickets data
 # path is phase 5's rehearsal (rehearsal-sync.yml, that card's file).
 #
-# Fallback if podman-in-Actions ever frictions out: swap the build steps to
-# docker buildx (docker/setup-buildx-action) — same Dockerfiles, same platforms.
+# CI ordering note: the dep resolution and the web-image pull need the GHCR
+# packages PUBLIC (the phase-10 flips) — until then these jobs fail on the
+# 401/404, which is the honest state, not a defect.
 
 name: umbrella-kind
 
@@ -31,12 +33,13 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.4
-      - name: lint the three charts + the umbrella (deps built first)
+      - name: resolve the published OCI deps (credential-free; public packages)
         run: |
-          helm lint k8s/umbrella/chudmax/subcharts/chudmax-engine
-          helm lint k8s/umbrella/chudmax/subcharts/chudmax-web
+          rm -rf k8s/umbrella/chudmax/charts
+          helm dependency update k8s/umbrella/chudmax
+      - name: lint the mcp chart + the umbrella (deps resolved first)
+        run: |
           helm lint k8s/chart/chudmax-mcp
-          helm dependency build k8s/umbrella/chudmax
           helm lint k8s/umbrella/chudmax
       - name: kubeconform
         run: |
@@ -51,65 +54,10 @@ jobs:
           ! grep -qEi 'kind: *CiliumNetworkPolicy|apiVersion: *cilium\.io/' /tmp/umb-endpoint.yaml
           /tmp/kubeconform -strict -summary /tmp/umb-defaults.yaml
           /tmp/kubeconform -strict -summary /tmp/umb-endpoint.yaml
-      - name: template + kubeconform (the subcharts' own variants)
-        run: |
-          helm template rel k8s/umbrella/chudmax/subcharts/chudmax-engine > /tmp/eng-defaults.yaml
-          helm template rel k8s/umbrella/chudmax/subcharts/chudmax-engine --set endpoint.host=203.0.113.10 > /tmp/eng-endpoint.yaml
-          helm template rel k8s/umbrella/chudmax/subcharts/chudmax-web > /tmp/web-defaults.yaml
-          helm template rel k8s/umbrella/chudmax/subcharts/chudmax-web --set 'allowedHosts={web.example.internal,other.example}' --set port=9090 > /tmp/web-custom.yaml
-          /tmp/kubeconform -strict -summary /tmp/eng-defaults.yaml /tmp/eng-endpoint.yaml /tmp/web-defaults.yaml /tmp/web-custom.yaml
-      - name: LAN-address hygiene (no RFC1918-shaped address in any phase-6 public artifact; TEST-NET-3 203.0.113.10 is the only IP in templates)
+      - name: LAN-address hygiene (no RFC1918-shaped address in any public artifact; TEST-NET-3 203.0.113.10 is the only IP in templates)
         run: |
           ! grep -RInE '\b(10|172|192)\.[0-9]+\.[0-9]+\.[0-9]+\b' \
             k8s/umbrella/chudmax .github/workflows/umbrella-kind.yml --exclude-dir=charts
-
-  web-image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - name: install podman
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq podman
-      - name: check out Strata at the pin (a moving main never changes the image silently)
-        run: |
-          git init -q "$RUNNER_TEMP/strata"
-          git -C "$RUNNER_TEMP/strata" fetch -q --depth 1 \
-            https://github.com/kingdonb/Strata \
-            de34ebaa521d8f628b4bb1884e5c34101730299a
-          git -C "$RUNNER_TEMP/strata" checkout -q FETCH_HEAD
-          git -C "$RUNNER_TEMP/strata" rev-parse HEAD
-      - name: build the manifest list (amd64 + arm64, no push)
-        run: >
-          podman build --platform linux/amd64,linux/arm64
-          --manifest web-ci:0.1.0
-          -f k8s/umbrella/chudmax/web-image/Dockerfile "$RUNNER_TEMP/strata"
-      - name: verify both architectures are in the list
-        run: |
-          podman manifest inspect web-ci:0.1.0 | grep -c '"architecture": "arm64"'
-          podman manifest inspect web-ci:0.1.0 | grep -c '"architecture": "amd64"'
-      - name: "amd64 smoke (the mock engine live: /health, the guard, a chat turn)"
-        run: |
-          podman run -d --name web-smoke --network host \
-            -e STRATA_ALLOWED_HOSTS="chudmax-engine,localhost,127.0.0.1" \
-            web-ci:0.1.0 --engine mock --host 0.0.0.0 --port 8080
-          code=""
-          for i in $(seq 1 30); do
-            code=$(curl -s -o /dev/null -m 2 -w '%{http_code}' http://127.0.0.1:8080/health || true)
-            [ "$code" = "200" ] && break
-            sleep 1
-          done
-          [ "$code" = "200" ] || { podman logs web-smoke; exit 1; }
-          echo "health 200 ok"
-          [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' -H 'Host: chudmax-engine:8080' http://127.0.0.1:8080/health)" = "200" ]
-          echo "guard: short-name+port Host accepted ok"
-          [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' -H 'Host: evil.example' http://127.0.0.1:8080/health)" = "403" ]
-          echo "guard: foreign Host 403 ok"
-          curl -s -m 15 -X POST -H 'Content-Type: application/json' \
-            -d '{"model":"mock","messages":[{"role":"user","content":"hello"}]}' \
-            http://127.0.0.1:8080/v1/chat/completions | grep -o 'Hello from the mock engine'
-          podman rm -f web-smoke >/dev/null
 
   kind:
     runs-on: ubuntu-latest
