@@ -432,7 +432,8 @@ receipt "repeat beat: review/image-updates advanced ${REVIEW_SHA:0:12} -> ${REVI
 # the one-branch control — final, against the settled repo state
 # ---------------------------------------------------------------------------
 note "the one-branch control: the automation credential vs refs/heads/main, one more time"
-git -C "$GIT_ROOT/control" commit -q --allow-empty -m "control: an attempted main push after the beats"
+git -C "$GIT_ROOT/control" -c user.name=control -c user.email=control@chudmax.invalid \
+  commit -q --allow-empty -m "control: an attempted main push after the beats"
 OUT=$(git_auth -C "$GIT_ROOT/control" push origin HEAD:refs/heads/main 2>&1) \
   && fail "a main push with the automation credential was ACCEPTED after the beats" || true
 echo "$OUT" | grep -q "denied:" || fail "the final main push failed but NOT via the hook: $OUT"
