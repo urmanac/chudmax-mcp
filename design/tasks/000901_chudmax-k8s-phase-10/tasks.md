@@ -1,20 +1,20 @@
 # Implementation Tasks: chudmax k8s phase 10 publishing split and flux mirror
 
 ## A. Seed `urmanac/chudmax-engine` (chart-only publisher)
-- [~] Re-root `k8s/umbrella/chudmax/subcharts/chudmax-engine/` to the repo root (Chart.yaml, values.yaml, templates/, README — content verbatim, README adapted to the standalone repo + spec pointer); no LICENSE (deferred note in the PR description)
-- [ ] Add `.github/workflows/publish.yml`: validate job (helm lint/template + kubeconform on push-main/PR, no push) + publish job (tag `v*`/dispatch: assert tag version == chart version, `helm package` + `helm push` to the flat prefix `oci://ghcr.io/urmanac`, cosign keyless sign + verify receipt); permissions `contents: read, packages: write, id-token: write`
-- [ ] Merge the PR, push tag `v0.1.0`, confirm the publish receipt (chart ref `ghcr.io/urmanac/chudmax-engine:0.1.0`, cosign verify OK)
+- [x] Re-root `k8s/umbrella/chudmax/subcharts/chudmax-engine/` to the repo root (Chart.yaml, values.yaml, templates/, README — content verbatim, README adapted to the standalone repo + spec pointer); no LICENSE (deferred note in the PR description)
+- [x] Add `.github/workflows/publish.yml`: validate job (helm lint/template + kubeconform on push-main/PR, no push) + publish job (tag `v*`/dispatch: assert tag version == chart version, `helm package` + `helm push` to the flat prefix `oci://ghcr.io/urmanac`, cosign keyless sign + verify receipt); permissions `contents: read, packages: write, id-token: write`
+- [ ] Merge the PR (proposal prp_01m8h8b182g27tybj9pcfkrsx7, awaiting approval), push tag `v0.1.0`, confirm the publish receipt (chart ref `ghcr.io/urmanac/chudmax-engine:0.1.0`, cosign verify OK)
 
 ## B. Seed `urmanac/chudmax-web` (chart + web image)
-- [~] Re-root `k8s/umbrella/chudmax/subcharts/chudmax-web/` to the repo root with the published-reality text flips (README/values/NOTES: image published at `ghcr.io/urmanac/chudmax/web:0.1.0`); move `k8s/umbrella/chudmax/web-image/` (Dockerfile + README with the Strata pin `de34ebaa…`)
-- [ ] Add `.github/workflows/publish.yml`: validate job (chart lint/template/kubeconform + the multi-arch web image build check with qemu binfmt — the `umbrella-kind.yml` web-image job verbatim) + publish job (build + `podman manifest push --all` the image at the bare-semver tag, `helm package`/`helm push` the chart to `oci://ghcr.io/urmanac`, cosign keyless sign + verify both)
-- [ ] Merge the PR, push tag `v0.1.0`, confirm the receipts (image manifest list amd64+arm64, chart, signatures)
+- [x] Re-root `k8s/umbrella/chudmax/subcharts/chudmax-web/` to the repo root with the published-reality text flips (README/values/NOTES: image published at `ghcr.io/urmanac/chudmax/web:0.1.0`); move `k8s/umbrella/chudmax/web-image/` (Dockerfile + README with the Strata pin `de34ebaa…`)
+- [x] Add `.github/workflows/publish.yml`: validate job (chart lint/template/kubeconform + the multi-arch web image build check with qemu binfmt — the `umbrella-kind.yml` web-image job verbatim) + publish job (build + `podman manifest push --all` the image at the bare-semver tag, `helm package`/`helm push` the chart to `oci://ghcr.io/urmanac`, cosign keyless sign + verify both)
+- [ ] Merge the PR (proposal prp_01m8h8cj9yx63gqc42a2pxjs6w, awaiting approval), push tag `v0.1.0`, confirm the receipts (image manifest list amd64+arm64, chart, signatures)
 - [ ] Human: flip packages `chudmax-web` (chart) and `chudmax/web` (image) Private→Public; anonymous `docker pull` + `helm pull` proof passes
 
 ## C. Seed `urmanac/hermes-agent` (chart-only publisher, rehearsal moves too)
-- [~] Re-root `k8s/chart/hermes-agent/` to the repo root; Chart.yaml description drops the "staged here until the phase-10 split" clause; README points at the spec dir; move `kind-smoke.sh` adapted: clone `urmanac/chudmax-mcp` at the pinned `main` SHA for the mcp chart + pod images (build from the clone's Dockerfiles), pull the web image from ghcr (published in step B), drop the Strata clone+build
-- [ ] Add `.github/workflows/publish.yml`: validate job (the phase-9 lint variants + the render-guard negative test + kubeconform + hygiene grep) + publish job (chart package/push/sign — no image build: upstream image stays upstream)
-- [ ] Merge the PR, push tag `v0.1.0`, confirm the receipt
+- [x] Re-root `k8s/chart/hermes-agent/` to the repo root; Chart.yaml description drops the "staged here until the phase-10 split" clause; README points at the spec dir (+ the Phase-16 community-chart note per review); move `kind-smoke.sh` adapted: clone `urmanac/chudmax-mcp` at the pinned `main` SHA (`58b2688…`) for the mcp chart + pod images, pull the web image from ghcr, drop the Strata clone+build
+- [x] Add `.github/workflows/publish.yml`: validate job CHART-ONLY (the phase-9 lint variants + the render-guard negative test + kubeconform + hygiene — passes before the GHCR flips; no kind job: the rehearsal runs manually until the flips land) + publish job (chart package/push/sign — no image build: upstream image stays upstream)
+- [ ] Merge the PR (proposal prp_01m8h8e34cgsvjsxvvzs8nbq7e, awaiting approval), push tag `v0.1.0`, confirm the receipt
 - [ ] Human: flip package `hermes-agent` Private→Public; apply the no-force-push/no-deletion ruleset to all 3 seeded repos (milestone 3 — direct pushes stay allowed)
 
 ## D. Flip + mirror in `urmanac/chudmax-mcp` (one PR)
