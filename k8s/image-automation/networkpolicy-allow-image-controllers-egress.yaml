@@ -1,0 +1,33 @@
+# Phase 8 (T-0037): an additive-allow egress rule for the two image
+# controllers. Flux's shipped policies constrain flux-system pods; the
+# image-automation-controller must reach the git remote (commit + push) and
+# the image-reflector-controller must reach the registry (ghcr.io in
+# production — an EXTERNAL host, unlike every other flux dependency).
+#
+# The shape mirrors the source-controller egress phase 5 proved ("unrestricted
+# egress"): a blunt 0.0.0.0/0 allow for exactly these two controllers. It is
+# applied by the rehearsal unconditionally and the receipt records whether it
+# was load-bearing (was the shipped per-controller policy blocking?). In
+# production the phase-12 wiring may narrow this (egress to 443 + the named
+# git host) — this file is the working shape, not the last word.
+#
+# The label is the one the flux bundle puts on the controller pods (verified
+# against the monitoring card's podmonitor-flux.yaml selector).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-image-controllers-egress
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - image-reflector-controller
+          - image-automation-controller
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0

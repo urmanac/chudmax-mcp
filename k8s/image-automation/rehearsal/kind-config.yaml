@@ -1,0 +1,22 @@
+# The phase-8 rehearsal's throwaway single-node kind cluster — phase-8's own
+# variant of k8s/rehearsal/kind-config.yaml (phase-5's stays untouched; helpers
+# are duplicated, never shared by reference with an active branch).
+#
+# The node image pin is the SAME as phase-5's (v1.34.11, digest from kind
+# v0.33.0's release notes): the newest kind-prebuilt node Flux v2.10.1 is built
+# for — the compatibility argument is CNI-independent.
+#
+# The ONE delta vs phase-5's config: NO disableDefaultCNI. This phase runs
+# STOCK KINDNET (the design's decision 9: no CiliumNetworkPolicy in this
+# phase's surface; kindnet has enforced NetworkPolicy since kind v0.24, so the
+# shipped-policy receipts are non-vacuous; and two CNIs never fight here
+# because there is only one). The first CI run's receipt: reusing phase-5's
+# config by path left the cluster CNI-less — every Flux pod Pending on the
+# not-ready taint ("1 node(s) had untolerated taint(s)") — the CI incident
+# recorded in this task's proofs.md.
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+name: phase8-rehearsal
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d

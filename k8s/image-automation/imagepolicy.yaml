@@ -1,0 +1,40 @@
+# Phase 8 (T-0037): the semver selection over each ImageRepository's scanned
+# tags. One policy per house-built image (same names as the repositories).
+#
+# The range holds the automation to the stable 0.x line: '>=0.1.0 <1.0.0'
+# selects the highest stable tag in that window and EXCLUDES prereleases
+# (the semver policy ignores them unless the range asks for them) — a
+# phase-10 rc/canary tag never auto-lands in the release values. A later
+# major needs a human edit of this range first — that is the gate.
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImagePolicy
+metadata:
+  name: chudmax-fetcher
+spec:
+  imageRepositoryRef:
+    name: chudmax-fetcher
+  policy:
+    semver:
+      range: '>=0.1.0 <1.0.0'
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImagePolicy
+metadata:
+  name: chudmax-tickets-mcp
+spec:
+  imageRepositoryRef:
+    name: chudmax-tickets-mcp
+  policy:
+    semver:
+      range: '>=0.1.0 <1.0.0'
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImagePolicy
+metadata:
+  name: chudmax-web
+spec:
+  imageRepositoryRef:
+    name: chudmax-web
+  policy:
+    semver:
+      range: '>=0.1.0 <1.0.0'

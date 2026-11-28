@@ -1,0 +1,16 @@
+# Phase 8 rehearsal (T-0037): the seed copy of the release-values miniature.
+# image-automation-rehearse.sh copies this into the test repo's work tree at
+# values/images.yaml and seeds the bare repo by clone (no HTTP push to main —
+# the update hook rejects those).
+#
+# The lines are the shape production's release values carry (repository:tag
+# image lines) with the Setters markers bound to the three ImagePolicies. The
+# seed tags are 0.1.0 (the chart defaults); the beats push 0.1.1 and 0.1.2.
+# The markers must sit at END OF LINE as comments — valid YAML, and the
+# setter machinery's anchor.
+web:
+  image: ghcr.io/urmanac/chudmax/web:0.1.0 # {"$imagepolicy": "flux-system:chudmax-web"}
+fetcher:
+  image: ghcr.io/urmanac/chudmax/fetcher:0.1.0 # {"$imagepolicy": "flux-system:chudmax-fetcher"}
+ticketsMcp:
+  image: ghcr.io/urmanac/chudmax/tickets-mcp:0.1.0 # {"$imagepolicy": "flux-system:chudmax-tickets-mcp"}

@@ -1,0 +1,29 @@
+# Phase 8 rehearsal (T-0037): the test variant of imageupdateautomation.yaml.
+# The ONE delta: update.path — the rehearsal repo's release-values tree is
+# values/ (the seed fixture), not the production ./kubernetes (which is
+# pinned at the phase-12 wiring). Everything else — the author, the message
+# template, the push branch review/image-updates, the interval — is the
+# production shape.
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageUpdateAutomation
+metadata:
+  name: chudmax-image-updates
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: chudmax-source
+  git:
+    commit:
+      author:
+        name: chudmax-flux-bot
+        email: flux-bot@chudmax.invalid
+      messageTemplate: |
+        Automated image update
+
+        {{ .Changed.Summary }}
+    push:
+      branch: review/image-updates
+  update:
+    strategy: Setters
+    path: values

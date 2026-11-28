@@ -1,0 +1,136 @@
+# The phase-8 CI rehearsal (T-0037): the image-automation loop on kind —
+# ImageRepository scans, ImagePolicy semver, ImageUpdateAutomation committing
+# to review/image-updates — against the in-cluster registry:2 stand-in and the
+# authed Smart-HTTP test repo on the runner.
+#
+# The kind job's log STREAMS to the runner log (set -o pipefail + tee — the
+# phase-9 blank-live-log lesson: never hide a rehearsal behind a redirect);
+# the receipts land in the step summary and the summary file is the artifact.
+# The credential-hygiene greps (in the script and again here, pattern-based)
+# run before anything uploads.
+#
+# No secrets: the registry and the test git repo are runner-local stand-ins
+# (ghcr.io stays unpublished until phase 10); the bot credential is generated
+# inside the job and never leaves it.
+#
+# This file is phase 8's only workflow edit surface.
+
+name: image-automation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'k8s/image-automation/**'
+      - '.github/workflows/image-automation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'k8s/image-automation/**'
+      - '.github/workflows/image-automation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: false   # the helper module is dependency-free (no go.sum to cache)
+      - name: Setup Flux CLI with the schema plugin
+        uses: fluxcd/flux2/action@v2.10.1
+        with:
+          plugins: |
+            schema
+      - name: the Flux schemas (the eight manifest files — the plain-values fixture is not a manifest)
+        run: |
+          flux schema validate \
+            k8s/image-automation/imagerepository.yaml \
+            k8s/image-automation/imagepolicy.yaml \
+            k8s/image-automation/imageupdateautomation.yaml \
+            k8s/image-automation/networkpolicy-allow-image-controllers-egress.yaml \
+            k8s/image-automation/rehearsal/gitrepository-rehearsal.yaml \
+            k8s/image-automation/rehearsal/imagerepository-rehearsal.yaml \
+            k8s/image-automation/rehearsal/imageupdateautomation-rehearsal.yaml \
+            k8s/image-automation/rehearsal/registry.yaml \
+            --schema-location default -v
+      - name: syntax and build
+        run: |
+          bash -n k8s/image-automation/image-automation-rehearse.sh
+          sh -n k8s/image-automation/rehearsal/main-protect-hook.sh
+          ( cd k8s/image-automation/rehearsal/gittestserver && go vet ./... && go build -o /tmp/gitsrv . )
+      - name: the base/rehearsal lockstep (the three images in both shapes; the three markers)
+        run: |
+          for img in fetcher tickets-mcp web; do
+            grep -q "image: ghcr.io/urmanac/chudmax/$img$" k8s/image-automation/imagerepository.yaml
+            grep -q "image: registry.flux-system.svc:5000/urmanac/chudmax/$img$" \
+              k8s/image-automation/rehearsal/imagerepository-rehearsal.yaml
+            grep -qF '"$imagepolicy": "flux-system:chudmax-'"$img"'"' k8s/image-automation/rehearsal/values-fixture.yaml
+          done
+          grep -q 'branch: review/image-updates' k8s/image-automation/imageupdateautomation.yaml
+          grep -q 'branch: review/image-updates' k8s/image-automation/rehearsal/imageupdateautomation-rehearsal.yaml
+          echo 'lockstep OK: the three image paths in both shapes + the three markers + the review branch'
+      - name: fixture hygiene (public-safe by construction — no LAN-shaped addresses)
+        # NB: NOT the inline `run: ! grep` form — a leading ! starts a YAML tag
+        # and the negation is silently eaten (the phase-5 CI incident).
+        run: |
+          if grep -RInE '\b(10|172|192)\.[0-9]+\.[0-9]+\.[0-9]+\b' k8s/image-automation; then
+            echo 'FAIL: an RFC1918-shaped address in the write set'
+            exit 1
+          fi
+          echo 'hygiene OK: no LAN-shaped addresses in k8s/image-automation/'
+
+  rehearsal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: false   # the helper module is dependency-free (no go.sum to cache)
+      - name: Setup Flux CLI
+        uses: fluxcd/flux2/action@v2.10.1
+      - name: install kind (pinned release binary)
+        run: |
+          curl -fsSL -o kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          kind version
+      - name: install podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman
+      - name: run the rehearsal (streamed — never hidden behind a redirect)
+        run: |
+          set -o pipefail
+          bash -n k8s/image-automation/image-automation-rehearse.sh
+          bash k8s/image-automation/image-automation-rehearse.sh 2>&1 | tee "${RUNNER_TEMP:-/tmp}/smoke.log"
+      - name: the receipts (always) — the credential hygiene first, then the summary
+        if: always()
+        run: |
+          LOG="${RUNNER_TEMP:-/tmp}/smoke.log"
+          SUM=/tmp/image-automation-summary.txt
+          # Pattern-based re-check (this step does not know the password):
+          # any credentialed-URL shape or long Authorization header in the
+          # streamed log or the summary fails the run.
+          if grep -nE 'fluxbot:[0-9a-f]{32}|Authorization: Basic [A-Za-z0-9+/=]{20,}' "$LOG" "$SUM" 2>/dev/null; then
+            echo 'FAIL: credential-shaped text in the streamed log or the summary'
+            exit 1
+          fi
+          test -f "$SUM" && cat "$SUM" >> "$GITHUB_STEP_SUMMARY" || true
+          if [ -f "$LOG" ]; then
+            echo '--- the streamed smoke log (tail 80) ---'
+            tail -80 "$LOG"
+          fi
+      - name: upload the summary (the live streamed log stays in the run log)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-automation-summary
+          path: /tmp/image-automation-summary.txt
