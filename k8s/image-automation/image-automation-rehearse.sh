@@ -319,6 +319,15 @@ receipt "the image controllers' shipped egress policies: $(kubectl -n "$NS" get 
 repo_ready() { kubectl -n "$NS" get "imagerepository/chudmax-$1" -o jsonpath='{.status.lastScanResult.tagCount}' | grep -qx "$2"; }
 policy_latest() { [ "$(kubectl -n "$NS" get "imagepolicy/chudmax-$1" -o jsonpath='{.status.latestRef.tag}')" = "$2" ]; }
 pushed_yet() { [ -n "$(kubectl -n "$NS" get imageupdateautomation/chudmax-image-updates -o jsonpath='{.status.lastPushCommit}')" ]; }
+branch_has_tag() {
+  local sha tip img
+  sha=$(git --git-dir="$REPO_GIT" rev-parse -q --verify refs/heads/review/image-updates 2>/dev/null) || return 1
+  tip=$(git --git-dir="$REPO_GIT" show "$sha:values/images.yaml" 2>/dev/null) || return 1
+  for img in fetcher tickets-mcp web; do
+    echo "$tip" | grep -q "registry.$NS.svc:5000/urmanac/chudmax/$img:$1" || return 1
+  done
+  [ "$(kubectl -n "$NS" get imageupdateautomation/chudmax-image-updates -o jsonpath='{.status.lastPushCommit}')" = "$sha" ]
+}
 
 scan_and_resolve() { # $1 the expected tag, $2 the expected tagCount — one image cycle
   local img="$1" tag="$2" count="$3"
@@ -362,13 +371,13 @@ done
 # forced reconcile is belt-and-braces; whichever path fires, the asserts below
 # are on the git state and the status, not on the triggering invocation.
 flux reconcile image update chudmax-image-updates --timeout=30s >/dev/null || true
-wait_until "the automation pushes the $TAG2 commit" pushed_yet
+wait_until "the automation pushes all three $TAG2 swaps" branch_has_tag "$TAG2"
 wait_until "the automation settles after the push" \
   kubectl -n "$NS" wait --for=condition=ready imageupdateautomation/chudmax-image-updates --timeout=5s
 PUSH1=$(kubectl -n "$NS" get imageupdateautomation/chudmax-image-updates -o jsonpath='{.status.lastPushCommit}')
 REVIEW_SHA=$(git --git-dir="$REPO_GIT" rev-parse refs/heads/review/image-updates)
 [ "$PUSH1" = "$REVIEW_SHA" ] || fail "status.lastPushCommit ($PUSH1) != the remote review tip ($REVIEW_SHA)"
-receipt "automation event stream: $(kubectl -n "$NS" get events -o jsonpath='{range .items[*]}{.involvedObject.name}{"\t"}{.message}{"\n"}{end}' | grep chudmax-image-updates | tail -2 | tr '\n' ' |')"
+receipt "automation event stream: $(kubectl -n "$NS" get events -o jsonpath='{range .items[*]}{.involvedObject.name}{"\t"}{.message}{"\n"}{end}' | grep chudmax-image-updates | tail -3 | tr '\n' ' |')"
 TIP=$(git --git-dir="$REPO_GIT" show "$REVIEW_SHA:values/images.yaml")
 for img in fetcher tickets-mcp web; do
   echo "$TIP" | grep -q "registry.$NS.svc:5000/urmanac/chudmax/$img:$TAG2" \
@@ -376,20 +385,24 @@ for img in fetcher tickets-mcp web; do
 done
 [ "$(echo "$TIP" | grep -c '\$imagepolicy')" = 3 ] || fail "the markers did not survive the rewrite: $TIP"
 if echo "$TIP" | grep -q 'ghcr.io'; then fail "the review tip still carries a ghcr.io ref — the setters missed a line: $TIP"; fi
-MSG=$(git --git-dir="$REPO_GIT" log -1 --format=%B "$REVIEW_SHA")
-[ "$(echo "$MSG" | grep -c -- ' -> ')" = 3 ] || fail "the commit message does not carry the three arrow lines: $MSG"
-AUTHOR=$(git --git-dir="$REPO_GIT" log -1 --format='%an <%ae>' "$REVIEW_SHA")
-[ "$AUTHOR" = "chudmax-flux-bot <flux-bot@chudmax.invalid>" ] || fail "unexpected commit author: $AUTHOR"
+# Flux's ImagePolicy watch reconciles reactively as each policy resolves (1..3
+# commits on main..review/image-updates depending on batching); across the beat's
+# range all three arrow lines and only the bot author must appear.
+MSG=$(git --git-dir="$REPO_GIT" log --format=%B "$MAIN_SHA..$REVIEW_SHA")
+[ "$(echo "$MSG" | grep -c -- ' -> ')" = 3 ] || fail "the beat-2 commit range does not carry all three arrow lines: $MSG"
+AUTHORS=$(git --git-dir="$REPO_GIT" log --format='%an <%ae>' "$MAIN_SHA..$REVIEW_SHA" | sort -u)
+[ "$AUTHORS" = "chudmax-flux-bot <flux-bot@chudmax.invalid>" ] || fail "unexpected commit author(s): $AUTHORS"
 [ "$(git --git-dir="$REPO_GIT" rev-parse refs/heads/main)" = "$MAIN_SHA" ] || fail "MAIN MOVED during the update beat"
-[ "$(git --git-dir="$REPO_GIT" rev-list --count refs/heads/review/image-updates)" = 2 ] \
-  || fail "the review branch is not seed+1 — unexpected push shape"
-receipt "review/image-updates @ ${REVIEW_SHA:0:12} carries all three $TAG2 swaps; message: $(echo "$MSG" | tail -1)"
+B2_COMMITS=$(git --git-dir="$REPO_GIT" rev-list --count "$MAIN_SHA..$REVIEW_SHA")
+[ "$B2_COMMITS" -ge 1 ] && [ "$B2_COMMITS" -le 3 ] \
+  || fail "unexpected beat-2 commit count on review/image-updates: $B2_COMMITS (want 1..3)"
+receipt "review/image-updates @ ${REVIEW_SHA:0:12} carries all three $TAG2 swaps across $B2_COMMITS reactive commit(s)"
 receipt "main still $MAIN_SHA — the machine never touched it"
 
 # ---------------------------------------------------------------------------
-# beat 3 — the repeat beat: the tip is overwritten with 0.1.2
+# beat 3 — the repeat beat: 0.1.2 advances review/image-updates cleanly
 # ---------------------------------------------------------------------------
-note "beat 3 — the repeat beat: $TAG3 overwrites the review tip (the default GitForcePushBranch semantics)"
+note "beat 3 — the repeat beat: $TAG3 advances review/image-updates (Flux GitAllBranchReferences=true appends onto existing push branch)"
 for img in fetcher tickets-mcp web; do
   rtag "ghcr.io/urmanac/chudmax/$img:$SEED_TAG" "$TAG3"
 done
@@ -397,8 +410,7 @@ for img in fetcher tickets-mcp web; do
   scan_and_resolve "$img" "$TAG3" 3
 done
 flux reconcile image update chudmax-image-updates --timeout=30s >/dev/null || true
-wait_until "the automation pushes the $TAG3 state" \
-  bash -c "[ \"\$(kubectl -n '$NS' get imageupdateautomation/chudmax-image-updates -o jsonpath='{.status.lastPushCommit}')\" != '$PUSH1' ]"
+wait_until "the automation pushes all three $TAG3 swaps" branch_has_tag "$TAG3"
 wait_until "the automation settles after the repeat" \
   kubectl -n "$NS" wait --for=condition=ready imageupdateautomation/chudmax-image-updates --timeout=5s
 REVIEW2=$(git --git-dir="$REPO_GIT" rev-parse refs/heads/review/image-updates)
@@ -408,10 +420,13 @@ for img in fetcher tickets-mcp web; do
   echo "$TIP2" | grep -q "registry.$NS.svc:5000/urmanac/chudmax/$img:$TAG3" \
     || fail "the repeat tip misses the $img swap to $TAG3: $TIP2"
 done
-[ "$(git --git-dir="$REPO_GIT" rev-list --count refs/heads/review/image-updates)" = 2 ] \
-  || fail "the repeat beat did not overwrite (count $(git --git-dir="$REPO_GIT" rev-list --count refs/heads/review/image-updates), want 2)"
+MSG3=$(git --git-dir="$REPO_GIT" log --format=%B "$REVIEW_SHA..$REVIEW2")
+[ "$(echo "$MSG3" | grep -c -- ' -> ')" = 3 ] || fail "the beat-3 commit range does not carry all three arrow lines: $MSG3"
+B3_COMMITS=$(git --git-dir="$REPO_GIT" rev-list --count "$REVIEW_SHA..$REVIEW2")
+[ "$B3_COMMITS" -ge 1 ] && [ "$B3_COMMITS" -le 3 ] \
+  || fail "unexpected beat-3 commit count: $B3_COMMITS (want 1..3)"
 [ "$(git --git-dir="$REPO_GIT" rev-parse refs/heads/main)" = "$MAIN_SHA" ] || fail "MAIN MOVED during the repeat beat"
-receipt "repeat beat: the review tip overwritten to ${REVIEW2:0:12} (first push ${REVIEW_SHA:0:12} recorded); branch count still 2; main still $MAIN_SHA"
+receipt "repeat beat: review/image-updates advanced ${REVIEW_SHA:0:12} -> ${REVIEW2:0:12} (+$B3_COMMITS commit(s), all three $TAG3 swaps); main still $MAIN_SHA"
 
 # ---------------------------------------------------------------------------
 # the one-branch control — final, against the settled repo state

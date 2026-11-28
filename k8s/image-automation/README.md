@@ -63,11 +63,13 @@ the automation's review push succeeds with the credential and an explicit
   not advertise push options, and an unadvertised option fails the push); the
   phase-12 wiring decides. Until then: the review branch updates, the human
   opens (or reuses) the MR.
-- **Append-only review history** would need the controller flag
-  `--feature-gates=GitForcePushBranch=false` (updates then compute on top of
-  the existing push branch). The default (overwrite from the checkout branch)
-  keeps the review tip equal to "the latest resolution" — the simpler story
-  for a human merge surface.
+- **Review-branch history under Flux v2.10.1 (`GitAllBranchReferences=true`).**
+  Since Flux enabled `GitAllBranchReferences=true` by default (`fluxcd/flux2#3384`),
+  when `review/image-updates` already exists on the remote the controller checks
+  out that push branch and appends each new resolution on top of it (reacting
+  within seconds of each `ImagePolicy` update), while `main` never moves. To
+  reset from `main` on every update instead, pass
+  `--feature-gates=GitAllBranchReferences=false` on `image-automation-controller`.
 - **Digest pinning** (`digestReflectionPolicy: IfNotPresent` + `:digest`
   markers) is a values decision deferred to the phase-10 wiring, where cosign
   signing makes digests meaningful.
